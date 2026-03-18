@@ -13,6 +13,8 @@ class EnrichedPosition(BaseModel):
     index: int
     title: str
     url: str | None
+    category: str
+    seniority_level: str
     years_of_experience: int
     required_skills_count: int
     has_seniority_keyword: bool

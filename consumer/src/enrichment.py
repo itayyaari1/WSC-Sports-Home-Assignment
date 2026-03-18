@@ -13,6 +13,31 @@ logger = get_logger(__name__)
 
 SENIORITY_KEYWORDS = {"senior", "lead", "architect", "manager", "principal"}
 
+CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "Engineering": [
+        "engineer", "developer", "devops", "backend", "frontend", "data",
+        "ml", "ai", "qa", "architect", "infrastructure", "algorithm",
+        "c++", "cloud", "finops", "nlp", "genai",
+    ],
+    "Design": [
+        "design", "ux", "ui", "creative", "graphic", "motion", "visual", "animation",
+    ],
+    "Product": [
+        "product", "program manager", "scrum", "project manager", "evangelist",
+    ],
+    "Operations": [
+        "operations", "hr", "finance", "office", "admin", "people", "recruit",
+        "sales", "account", "marketing", "business", "legal", "partnerships",
+        "controller", "counsel", "bizdev",
+    ],
+}
+
+_SENIORITY_LEVEL_KEYWORDS: dict[str, list[str]] = {
+    "Junior": ["junior", "intern", "entry", "associate", "graduate"],
+    "Senior": ["senior", "sr.", "staff"],
+    "Lead": ["lead", "principal", "head", "director", "vp", "chief"],
+}
+
 
 def fetch_position_html(url: str) -> str | None:
     """Fetch the HTML for a single career position page. Returns None on failure."""
@@ -48,6 +73,38 @@ def detect_seniority_keyword(soup: BeautifulSoup) -> bool:
     return any(kw in title_lower for kw in SENIORITY_KEYWORDS)
 
 
+def classify_category(title: str) -> str:
+    """Classify a position title into a category using keyword matching."""
+    title_lower = title.lower()
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        if any(kw in title_lower for kw in keywords):
+            return category
+    return "Other"
+
+
+def classify_seniority_level(req_block: BeautifulSoup | None, years: int) -> str:
+    """Derive Junior/Mid/Senior/Lead from the requirements block and years of experience.
+
+    Years-of-experience thresholds are the primary signal. When years = 0,
+    falls back to keyword scanning of the requirements text.
+    """
+    if years >= 7:
+        return "Lead"
+    if years >= 4:
+        return "Senior"
+    if years >= 1:
+        return "Mid"
+
+    # years == 0: fall back to keyword scan of the requirements text
+    if req_block:
+        req_text = req_block.get_text(" ", strip=True).lower()
+        for level, keywords in _SENIORITY_LEVEL_KEYWORDS.items():
+            if any(kw in req_text for kw in keywords):
+                return level
+
+    return "Mid"
+
+
 def calculate_complexity_score(
     years: int,
     skills: int,
@@ -72,6 +129,7 @@ def _enrich_one(position: Position, title_mapping: dict[str, str]) -> EnrichedPo
     years = 0
     skills = 0
     has_seniority = False
+    req_block = None
 
     if url:
         html = fetch_position_html(url)
@@ -89,12 +147,16 @@ def _enrich_one(position: Position, title_mapping: dict[str, str]) -> EnrichedPo
     else:
         logger.warning("No URL found for position: %s", position.title)
 
+    category = classify_category(position.title)
+    seniority_level = classify_seniority_level(req_block, years)
     score = calculate_complexity_score(years, skills, has_seniority)
 
     return EnrichedPosition(
         index=position.index,
         title=position.title,
         url=url,
+        category=category,
+        seniority_level=seniority_level,
         years_of_experience=years,
         required_skills_count=skills,
         has_seniority_keyword=has_seniority,

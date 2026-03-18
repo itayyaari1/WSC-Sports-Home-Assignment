@@ -1,4 +1,3 @@
-import signal
 import sys
 
 import pandas as pd
@@ -12,14 +11,6 @@ from src.storage import upload_to_s3
 from src.url_cache import check_and_refresh_cache
 
 logger = get_logger(__name__)
-
-_shutdown = False
-
-
-def _handle_signal(signum, frame):
-    global _shutdown
-    logger.info("Received signal %d, shutting down gracefully...", signum)
-    _shutdown = True
 
 
 def _df_to_positions(df: pd.DataFrame) -> list[Position]:
@@ -37,14 +28,11 @@ def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
 
 def run():
     """Main consumer loop: consume -> enrich -> upload -> commit."""
-    signal.signal(signal.SIGTERM, _handle_signal)
-    signal.signal(signal.SIGINT, _handle_signal)
-
     logger.info("Starting WSC Sports position consumer")
     consumer = create_consumer()
 
     try:
-        while not _shutdown:
+        while True:
             df = poll_message(consumer)
 
             if df is None:

@@ -52,14 +52,22 @@ helm/                       # Kubernetes deployment charts (Phase 2)
 All commands use the Makefile:
 
 ```bash
-# Development
+# Full Docker (simplest)
 make build              # Build Docker images
 make up                 # Start all services (Kafka, LocalStack, Producer, Consumer)
 make down               # Stop services
 make logs               # Stream logs from all services
+make clean              # Stop services and remove volumes/images
+
+# Local development (Python on host, infra in Docker)
+make local-install      # Create .venv in each service dir, symlink .env, install deps
+make local-infra        # Start only Kafka + LocalStack in Docker
+make run-producer       # Run producer locally (one-shot: scrape → publish → exit)
+make run-consumer       # Run consumer locally (long-running poll loop)
+
+# Testing & linting
 make test               # Run pytest on producer/ and consumer/ tests
 make lint               # Run ruff check on producer/src and consumer/src
-make clean              # Stop services and remove volumes/images
 
 # Infrastructure (Phase 2 — Terraform)
 make infra-init         # terraform init
@@ -70,8 +78,18 @@ make infra-destroy      # terraform destroy
 
 **Running a single test:**
 ```bash
-cd producer && python -m pytest tests/test_scraper.py -v
-cd consumer && python -m pytest tests/test_enrichment.py::test_function_name -v
+cd producer && ../.venv/bin/python -m pytest tests/test_scraper.py -v
+cd consumer && .venv/bin/python -m pytest tests/test_enrichment.py::test_function_name -v
+```
+
+**Inspecting output data (LocalStack S3):**
+```bash
+# List uploaded files
+aws --endpoint-url=http://localhost:4566 s3 ls s3://wsc-positions-data/positions/ --recursive
+
+# Download and read a parquet file
+aws --endpoint-url=http://localhost:4566 s3 cp s3://wsc-positions-data/<key>.parquet /tmp/out.parquet
+cd consumer && .venv/bin/python -c "import pandas as pd; print(pd.read_parquet('/tmp/out.parquet').to_string())"
 ```
 
 ## Data Flow
@@ -134,12 +152,18 @@ All tests run via `make test`.
 
 Docker Compose orchestrates:
 - **Zookeeper** (port 2181) — Kafka coordination
-- **Kafka** (port 9092) — Message broker
-- **LocalStack** (port 4566) — S3 simulation
+- **Kafka** (port 9092) — Message broker, exposed on `localhost:9092` for host processes
+- **LocalStack** (port 4566) — S3 simulation, exposed on `localhost:4566` for host processes
 - **Producer** — Runs scraper loop, publishes to Kafka
 - **Consumer** — Runs consumer loop, uploads to S3
 
-Services use healthchecks to wait for dependencies. Run `make up` to start all.
+Services use healthchecks to wait for dependencies. Run `make up` to start all in Docker, or `make local-infra` + `make run-producer`/`make run-consumer` to run Python on the host.
+
+**Local dev setup notes:**
+- `make local-install` creates `producer/.venv` and `consumer/.venv` and symlinks `.env` into each service dir
+- `.env` uses `localhost` addresses for Kafka and LocalStack (not Docker hostnames)
+- `confluent-kafka` requires `librdkafka` on macOS: `brew install librdkafka`
+- The consumer tolerates `UNKNOWN_TOPIC_OR_PART` on startup — it waits until the producer creates the topic
 
 ## Common Development Patterns
 

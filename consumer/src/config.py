@@ -15,6 +15,9 @@ class ConsumerSettings(BaseSettings):
     aws_access_key_id: str = "test"
     aws_secret_access_key: str = "test"
 
+    careers_url: str = "https://wsc-sports.com/Careers"
+    url_cache_path: str = "url_cache.json"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

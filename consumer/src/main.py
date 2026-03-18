@@ -5,6 +5,8 @@ from shared.logger import get_logger
 from src.kafka_consumer import create_consumer, poll_message, commit_offset
 from src.enrichment import enrich_positions
 from src.storage import upload_to_s3
+from src.url_cache import check_and_refresh_cache
+from src.config import settings
 
 logger = get_logger(__name__)
 
@@ -31,6 +33,9 @@ def run():
 
             if df is None:
                 continue
+
+            # Check and refresh URL cache
+            check_and_refresh_cache(settings.careers_url, settings.url_cache_path)
 
             # Enrich
             try:

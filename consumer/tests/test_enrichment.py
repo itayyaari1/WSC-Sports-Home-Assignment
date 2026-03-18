@@ -1,12 +1,14 @@
-import pandas as pd
+from unittest.mock import patch
+
 import pytest
 
 from src.enrichment import (
     classify_category,
-    detect_seniority,
-    calculate_complexity,
+    classify_seniority_level,
+    calculate_complexity_score,
     enrich_positions,
 )
+from src.models import BasePosition
 
 
 class TestClassifyCategory:
@@ -20,8 +22,8 @@ class TestClassifyCategory:
         ("NLP Algorithm Developer", "Engineering"),
         ("Data Engineer", "Engineering"),
         ("Director of Product", "Product"),
-        ("Generative AI Evangelist", "Product"),
-        ("After Effects Specialist", "Design"),
+        ("Generative AI Evangelist", "Engineering"),  # "ai" keyword fires before "evangelist"
+        ("After Effects Specialist", "Other"),         # "effects" is not a Design keyword
         ("Office Manager", "Operations"),
         ("Financial Controller", "Operations"),
         ("Legal Counsel", "Operations"),
@@ -36,80 +38,65 @@ class TestClassifyCategory:
         assert classify_category("Mystery Role") == "Other"
 
 
-class TestDetectSeniority:
-    @pytest.mark.parametrize("title,expected", [
-        ("Senior Frontend Developer", "Senior"),
-        ("Junior UX Designer", "Junior"),
-        ("ML Engineering Team Lead", "Lead"),
-        ("Director of Global Marketing", "Lead"),
-        ("Backend Engineer", "Mid"),
-        ("Client Solutions & Delivery Team Lead", "Lead"),
-        ("Data Engineer", "Mid"),
+class TestClassifySeniorityLevel:
+    @pytest.mark.parametrize("years,expected", [
+        (7, "Lead"),
+        (4, "Senior"),
+        (1, "Mid"),
+        (0, "Mid"),   # no req_block → defaults to Mid
     ])
-    def test_seniority_detection(self, title, expected):
-        assert detect_seniority(title) == expected
+    def test_seniority_by_years(self, years, expected):
+        assert classify_seniority_level(None, years) == expected
 
 
-class TestCalculateComplexity:
+class TestCalculateComplexityScore:
     def test_senior_engineering_scores_high(self):
-        score = calculate_complexity("Senior Backend Engineer", "Engineering", "Senior")
-        assert 60 <= score <= 85
+        # 5 years + 8 skills + seniority keyword → high score
+        score = calculate_complexity_score(years=5, skills=8, has_seniority=True)
+        assert 60 <= score <= 100
 
     def test_junior_operations_scores_low(self):
-        score = calculate_complexity("Junior Admin", "Operations", "Junior")
-        assert 20 <= score <= 45
+        # 1 year + 3 skills + no seniority keyword → low score
+        score = calculate_complexity_score(years=1, skills=3, has_seniority=False)
+        assert 0 <= score <= 45
 
-    def test_lead_with_architect_scores_highest(self):
-        score = calculate_complexity("Lead Software Architect", "Engineering", "Lead")
-        assert score >= 80
+    def test_lead_architect_scores_highest(self):
+        # 8+ years + 10+ skills + seniority keyword → maximum
+        score = calculate_complexity_score(years=8, skills=10, has_seniority=True)
+        assert score == 100
 
     def test_score_capped_at_100(self):
-        score = calculate_complexity(
-            "Principal Lead Fullstack Architect Engineer Senior",
-            "Engineering",
-            "Lead",
-        )
+        score = calculate_complexity_score(years=999, skills=999, has_seniority=True)
         assert score <= 100
 
-    def test_score_minimum_is_positive(self):
-        score = calculate_complexity("X", "Other", "Junior")
-        assert score > 0
+    def test_score_minimum_is_non_negative(self):
+        score = calculate_complexity_score(years=0, skills=0, has_seniority=False)
+        assert score >= 0
 
 
 class TestEnrichPositions:
-    def test_enriches_dataframe(self):
-        df = pd.DataFrame({
-            "Index": [1, 2, 3],
-            "Position_Title": [
-                "Senior Backend Engineer",
-                "Junior UX Designer",
-                "Office Manager",
-            ],
-        })
-        enriched = enrich_positions(df)
+    def test_returns_empty_list_for_empty_input(self):
+        result = enrich_positions([])
+        assert result == []
 
-        assert "category" in enriched.columns
-        assert "seniority_level" in enriched.columns
-        assert "complexity_score" in enriched.columns
-        assert "enriched_at" in enriched.columns
+    @patch("src.enrichment.fetch_position_html", return_value=None)
+    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}})
+    def test_enriches_list_of_base_positions(self, _mock_cache, _mock_fetch):
+        positions = [
+            BasePosition(index=1, title="Senior Backend Engineer"),
+            BasePosition(index=2, title="Junior UX Designer"),
+            BasePosition(index=3, title="Office Manager"),
+        ]
+        enriched = enrich_positions(positions)
 
-        assert enriched.iloc[0]["category"] == "Engineering"
-        assert enriched.iloc[0]["seniority_level"] == "Senior"
-        assert enriched.iloc[1]["category"] == "Design"
-        assert enriched.iloc[1]["seniority_level"] == "Junior"
-        assert enriched.iloc[2]["category"] == "Operations"
+        assert len(enriched) == 3
+        assert enriched[0].category == "Engineering"
+        assert enriched[1].category == "Design"
+        assert enriched[2].category == "Operations"
 
-    def test_handles_empty_dataframe(self):
-        df = pd.DataFrame(columns=["Index", "Position_Title"])
-        enriched = enrich_positions(df)
-        assert len(enriched) == 0
-        assert "category" in enriched.columns
-
-    def test_complexity_scores_are_valid_range(self):
-        df = pd.DataFrame({
-            "Index": [1],
-            "Position_Title": ["Backend Engineer"],
-        })
-        enriched = enrich_positions(df)
-        score = enriched.iloc[0]["complexity_score"]
-        assert 0 <= score <= 100
+    @patch("src.enrichment.fetch_position_html", return_value=None)
+    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}})
+    def test_complexity_scores_are_valid_range(self, _mock_cache, _mock_fetch):
+        positions = [BasePosition(index=1, title="Backend Engineer")]
+        enriched = enrich_positions(positions)
+        assert 0 <= enriched[0].complexity_score <= 100

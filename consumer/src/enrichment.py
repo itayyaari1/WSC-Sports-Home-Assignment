@@ -1,12 +1,11 @@
 import re
-from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
 
 from shared.logger import get_logger
 from src.config import settings
-from src.models import EnrichedPosition, Position
+from src.models import BasePosition, EnrichedPosition
 from src.url_cache import load_cache
 
 logger = get_logger(__name__)
@@ -122,9 +121,9 @@ def calculate_complexity_score(
     return round(experience_score + skills_score + seniority_score)
 
 
-def _enrich_one(position: Position, title_mapping: dict[str, str]) -> EnrichedPosition:
-    """Enrich a single Position by scraping its detail page."""
-    url = position.url or title_mapping.get(position.title)
+def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> EnrichedPosition:
+    """Enrich a single BasePosition by scraping its detail page."""
+    url = title_mapping.get(position.title)
 
     years = 0
     skills = 0
@@ -154,18 +153,15 @@ def _enrich_one(position: Position, title_mapping: dict[str, str]) -> EnrichedPo
     return EnrichedPosition(
         index=position.index,
         title=position.title,
-        url=url,
         category=category,
         seniority_level=seniority_level,
         years_of_experience=years,
-        required_skills_count=skills,
-        has_seniority_keyword=has_seniority,
+        skills_count=skills,
         complexity_score=score,
-        enriched_at=datetime.now(timezone.utc),
     )
 
 
-def enrich_positions(positions: list[Position]) -> list[EnrichedPosition]:
+def enrich_positions(positions: list[BasePosition]) -> list[EnrichedPosition]:
     """Enrich a list of Positions with scraped signals and a complexity score."""
     if not positions:
         logger.warning("Received empty positions list for enrichment")

@@ -16,14 +16,11 @@ logger = get_logger(__name__)
 ENRICHED_SCHEMA = pa.schema([
     ("index", pa.int32()),
     ("title", pa.string()),
-    ("url", pa.string()),
     ("category", pa.string()),
     ("seniority_level", pa.string()),
     ("years_of_experience", pa.int32()),
-    ("required_skills_count", pa.int32()),
-    ("has_seniority_keyword", pa.bool_()),
+    ("skills_count", pa.int32()),
     ("complexity_score", pa.int32()),
-    ("enriched_at", pa.timestamp("us", tz="UTC")),
 ])
 
 

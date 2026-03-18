@@ -4,17 +4,17 @@ from shared.logger import get_logger
 from src.config import settings
 from src.enrichment import enrich_positions
 from src.kafka_consumer import commit_offset, create_consumer, poll_message
-from src.models import EnrichedPosition, Position
+from src.models import BasePosition, EnrichedPosition
 from src.storage import upload_to_s3
 from src.url_cache import check_and_refresh_cache
 
 logger = get_logger(__name__)
 
 
-def _df_to_positions(df: pd.DataFrame) -> list[Position]:
-    """Convert a raw positions DataFrame into a list of Position models."""
+def _df_to_positions(df: pd.DataFrame) -> list[BasePosition]:
+    """Convert a raw positions DataFrame into a list of BasePosition models."""
     return [
-        Position(index=int(row.Index), title=str(row.Position_Title))
+        BasePosition(index=int(row.Index), title=str(row.Position_Title))
         for row in df.itertuples(index=False)
     ]
 

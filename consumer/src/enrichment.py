@@ -1,116 +1,118 @@
-from shared.logger import get_logger
+import re
 from datetime import datetime, timezone
 
-import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
+from shared.logger import get_logger
+from src.config import settings
+from src.models import EnrichedPosition, Position
+from src.url_cache import load_cache
 
 logger = get_logger(__name__)
 
-# Category keyword mappings (checked in priority order)
-CATEGORY_KEYWORDS = {
-    "Engineering": [
-        "engineer", "developer", "devops", "sre", "backend", "frontend",
-        "fullstack", "full-stack", "data", "ml", "ai", "qa", "test",
-        "security", "architect", "infrastructure", "platform", "software",
-        "algorithm", "c++", "cloud", "finops", "nlp", "genai",
-    ],
-    "Design": [
-        "design", "ux", "ui", "creative", "after effects", "graphic",
-        "motion", "visual", "animation",
-    ],
-    "Product": [
-        "product", "program manager", "scrum", "agile", "project manager",
-        "evangelist",
-    ],
-    "Operations": [
-        "operations", "hr", "finance", "office", "admin", "people",
-        "recruit", "sales", "account", "marketing", "business", "legal",
-        "partnerships", "controller", "counsel", "bizdev",
-    ],
-}
-
-# Seniority keyword mappings (checked in priority order)
-SENIORITY_KEYWORDS = {
-    "Lead": [
-        "lead", "head", "director", "vp", "principal", "chief", "team lead",
-    ],
-    "Senior": ["senior", "sr.", "staff"],
-    "Junior": ["junior", "jr.", "intern", "entry", "associate", "graduate"],
-}
-
-# Complexity score weights
-SENIORITY_SCORES = {"Junior": 10, "Mid": 20, "Senior": 30, "Lead": 40}
-CATEGORY_SCORES = {
-    "Engineering": 30,
-    "Design": 20,
-    "Product": 20,
-    "Operations": 15,
-    "Other": 10,
-}
-COMPLEXITY_KEYWORDS = ["architect", "fullstack", "full-stack", "principal"]
+SENIORITY_KEYWORDS = {"senior", "lead", "architect", "manager", "principal"}
 
 
-def classify_category(title: str) -> str:
-    """Classify a position title into a category."""
-    title_lower = title.lower()
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(kw in title_lower for kw in keywords):
-            return category
-    return "Other"
+def fetch_position_html(url: str) -> str | None:
+    """Fetch the HTML for a single career position page. Returns None on failure."""
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.warning("Failed to fetch position page %s: %s", url, e)
+        return None
 
 
-def detect_seniority(title: str) -> str:
-    """Detect seniority level from a position title."""
-    title_lower = title.lower()
-    for level, keywords in SENIORITY_KEYWORDS.items():
-        if any(kw in title_lower for kw in keywords):
-            return level
-    return "Mid"
+def parse_years_of_experience(req_block: BeautifulSoup) -> int:
+    """Extract the maximum years-of-experience figure from the requirements block."""
+    text = req_block.get_text(" ", strip=True)
+    matches = re.findall(r"(\d+)\+?\s*years", text, re.IGNORECASE)
+    if not matches:
+        return 0
+    return max(int(m) for m in matches)
 
 
-def calculate_complexity(title: str, category: str, seniority: str) -> int:
-    """Calculate a complexity score (0-100) based on title, category, and seniority."""
-    score = 0
-
-    # Seniority weight (0-40)
-    score += SENIORITY_SCORES.get(seniority, 20)
-
-    # Category tech depth (0-30)
-    score += CATEGORY_SCORES.get(category, 10)
-
-    # Title specificity based on word count (0-15)
-    word_count = len(title.split())
-    specificity = min(word_count * 3, 15)
-    score += specificity
-
-    # Keyword modifiers (0-15)
-    title_lower = title.lower()
-    modifier_score = sum(5 for kw in COMPLEXITY_KEYWORDS if kw in title_lower)
-    score += min(modifier_score, 15)
-
-    return min(score, 100)
+def parse_skills_count(req_block: BeautifulSoup) -> int:
+    """Count the number of <li> items inside the requirements block."""
+    return len(req_block.find_all("li"))
 
 
-def enrich_positions(df: pd.DataFrame) -> pd.DataFrame:
-    """Enrich a positions DataFrame with category, seniority, and complexity score."""
-    if df.empty:
-        logger.warning("Received empty DataFrame for enrichment")
-        df["category"] = pd.Series(dtype="str")
-        df["seniority_level"] = pd.Series(dtype="str")
-        df["complexity_score"] = pd.Series(dtype="int32")
-        df["enriched_at"] = pd.Series(dtype="datetime64[ns, UTC]")
-        return df
+def detect_seniority_keyword(soup: BeautifulSoup) -> bool:
+    """Return True if the <h1> title contains a seniority keyword."""
+    h1 = soup.select_one("h1")
+    if not h1:
+        return False
+    title_lower = h1.get_text(" ", strip=True).lower()
+    return any(kw in title_lower for kw in SENIORITY_KEYWORDS)
 
-    logger.info("Enriching %d positions", len(df))
 
-    df["category"] = df["Position_Title"].apply(classify_category)
-    df["seniority_level"] = df["Position_Title"].apply(detect_seniority)
-    df["complexity_score"] = df.apply(
-        lambda row: calculate_complexity(
-            row["Position_Title"], row["category"], row["seniority_level"]
-        ),
-        axis=1,
-    ).astype("int32")
-    df["enriched_at"] = datetime.now(timezone.utc)
+def calculate_complexity_score(
+    years: int,
+    skills: int,
+    has_seniority: bool,
+) -> int:
+    """Calculate a 0-100 complexity score from three weighted factors.
 
-    logger.info("Enrichment complete. Categories: %s", df["category"].value_counts().to_dict())
-    return df
+    Experience  40%: years mapped to 0-8+ scale
+    Skills      40%: li count mapped to 0-10+ scale
+    Seniority   20%: binary — keyword present or not
+    """
+    experience_score = min(years / 8, 1.0) * 40
+    skills_score = min(skills / 10, 1.0) * 40
+    seniority_score = 20 if has_seniority else 0
+    return round(experience_score + skills_score + seniority_score)
+
+
+def _enrich_one(position: Position, title_mapping: dict[str, str]) -> EnrichedPosition:
+    """Enrich a single Position by scraping its detail page."""
+    url = position.url or title_mapping.get(position.title)
+
+    years = 0
+    skills = 0
+    has_seniority = False
+
+    if url:
+        html = fetch_position_html(url)
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            req_block = soup.select_one(
+                "div.career-text-block__wrp--data--requirements"
+            )
+            if req_block:
+                years = parse_years_of_experience(req_block)
+                skills = parse_skills_count(req_block)
+            else:
+                logger.debug("No requirements block found for: %s", position.title)
+            has_seniority = detect_seniority_keyword(soup)
+    else:
+        logger.warning("No URL found for position: %s", position.title)
+
+    score = calculate_complexity_score(years, skills, has_seniority)
+
+    return EnrichedPosition(
+        index=position.index,
+        title=position.title,
+        url=url,
+        years_of_experience=years,
+        required_skills_count=skills,
+        has_seniority_keyword=has_seniority,
+        complexity_score=score,
+        enriched_at=datetime.now(timezone.utc),
+    )
+
+
+def enrich_positions(positions: list[Position]) -> list[EnrichedPosition]:
+    """Enrich a list of Positions with scraped signals and a complexity score."""
+    if not positions:
+        logger.warning("Received empty positions list for enrichment")
+        return []
+
+    cache = load_cache(settings.url_cache_path)
+    title_mapping: dict[str, str] = (cache or {}).get("title_mapping", {})
+
+    logger.info("Enriching %d positions", len(positions))
+
+    enriched = [_enrich_one(p, title_mapping) for p in positions]
+    return enriched

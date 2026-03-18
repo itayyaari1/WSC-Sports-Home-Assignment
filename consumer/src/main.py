@@ -1,12 +1,15 @@
 import signal
 import sys
 
+import pandas as pd
+
 from shared.logger import get_logger
-from src.kafka_consumer import create_consumer, poll_message, commit_offset
+from src.config import settings
 from src.enrichment import enrich_positions
+from src.kafka_consumer import commit_offset, create_consumer, poll_message
+from src.models import EnrichedPosition, Position
 from src.storage import upload_to_s3
 from src.url_cache import check_and_refresh_cache
-from src.config import settings
 
 logger = get_logger(__name__)
 
@@ -17,6 +20,19 @@ def _handle_signal(signum, frame):
     global _shutdown
     logger.info("Received signal %d, shutting down gracefully...", signum)
     _shutdown = True
+
+
+def _df_to_positions(df: pd.DataFrame) -> list[Position]:
+    """Convert a raw positions DataFrame into a list of Position models."""
+    return [
+        Position(index=int(row.Index), title=str(row.Position_Title))
+        for row in df.itertuples(index=False)
+    ]
+
+
+def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
+    """Convert a list of EnrichedPosition models back to a DataFrame for storage."""
+    return pd.DataFrame([e.model_dump() for e in enriched])
 
 
 def run():
@@ -37,12 +53,18 @@ def run():
             # Check and refresh URL cache
             check_and_refresh_cache(settings.careers_url, settings.url_cache_path)
 
+            # Convert DataFrame rows to Position models
+            positions = _df_to_positions(df)
+
             # Enrich
             try:
-                enriched_df = enrich_positions(df)
+                enriched = enrich_positions(positions)
             except Exception as e:
                 logger.error("Enrichment failed: %s", e)
                 continue
+
+            # Convert enriched models back to DataFrame for storage
+            enriched_df = _enriched_to_df(enriched)
 
             # Upload to S3
             try:

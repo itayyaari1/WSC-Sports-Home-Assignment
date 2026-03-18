@@ -48,6 +48,16 @@ def strip_view_position_suffix(text: str) -> str:
     return normalized
 
 
+def extract_title_from_link(link) -> str:
+    """Extract title from structured span first, then fallback to link text."""
+    title_span = link.select_one("span.link-text")
+    if title_span:
+        return normalize_title(title_span.get_text(" ", strip=True))
+
+    link_text = normalize_title(link.get_text(" ", strip=True))
+    return strip_view_position_suffix(link_text)
+
+
 def parse_positions(html: str) -> list[str]:
     """Extract position titles from the careers page HTML."""
     soup = BeautifulSoup(html, "html.parser")
@@ -57,8 +67,7 @@ def parse_positions(html: str) -> list[str]:
     # Primary strategy: find links containing "/career/" in href
     career_links = soup.find_all("a", href=lambda h: h and "/career/" in h.lower())
     for link in career_links:
-        link_text = normalize_title(link.get_text(" ", strip=True))
-        title = strip_view_position_suffix(link_text)
+        title = extract_title_from_link(link)
         if title and title.lower() != "view position":
             positions.append(title)
 
@@ -68,8 +77,7 @@ def parse_positions(html: str) -> list[str]:
         for li in soup.find_all("li"):
             link = li.find("a")
             if link and link.get("href", ""):
-                link_text = normalize_title(link.get_text(" ", strip=True))
-                title = strip_view_position_suffix(link_text)
+                title = extract_title_from_link(link)
                 if title and title.lower() != "view position":
                     positions.append(title)
 

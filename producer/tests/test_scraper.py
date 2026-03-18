@@ -68,6 +68,24 @@ class TestParsePositions:
         positions = parse_positions(SAMPLE_HTML)
         assert "View Position" not in positions
 
+    def test_prefers_link_text_span_when_present(self):
+        html = """
+        <html><body>
+          <a href="/career/account-manager-2/">
+            <div class="d-flex align-items-center justify-content-between fade-in">
+              <span class="link-text">Account Manager</span>
+              <div class="btn btn-outline-secondary btn-rounded">
+                <span class="btn-label-wrap">
+                  <span class="btn-label" data-text="View Position">View Position</span>
+                </span>
+              </div>
+            </div>
+          </a>
+        </body></html>
+        """
+        positions = parse_positions(html)
+        assert positions == ["Account Manager"]
+
     def test_handles_combined_title_and_cta_text(self):
         html = """
         <html><body>

@@ -1,5 +1,4 @@
 import logging
-import signal
 import sys
 
 from src.scraper import scrape_positions, ScraperError
@@ -13,20 +12,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_shutdown = False
-
-
-def _handle_signal(signum, frame):
-    global _shutdown
-    logger.info("Received signal %d, shutting down...", signum)
-    _shutdown = True
-
-
 def run():
     """Main producer pipeline: scrape -> parquet -> kafka."""
-    signal.signal(signal.SIGTERM, _handle_signal)
-    signal.signal(signal.SIGINT, _handle_signal)
-
     logger.info("Starting WSC Sports position producer")
 
     # Step 1: Scrape positions
@@ -36,20 +23,12 @@ def run():
         logger.error("Scraping failed: %s", e)
         sys.exit(1)
 
-    if _shutdown:
-        logger.info("Shutdown requested, exiting before Kafka publish")
-        return
-
     # Step 2: Build parquet
     try:
         parquet_bytes = build_parquet(positions)
     except ValueError as e:
         logger.error("Parquet build failed: %s", e)
         sys.exit(1)
-
-    if _shutdown:
-        logger.info("Shutdown requested, exiting before Kafka publish")
-        return
 
     # Step 3: Publish to Kafka
     producer = create_producer()

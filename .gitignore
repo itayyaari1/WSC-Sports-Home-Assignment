@@ -5,3 +5,4 @@ producer/.venv/
 consumer/.venv/
 **/__pycache__/
 **/*.pyc
+.vscode/launch.json

@@ -1,6 +1,8 @@
 import json
+import re
 import unicodedata
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -27,18 +29,59 @@ def _base_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _extract_last_modified_from_html(html: str, header_fallback: str | None) -> str:
+    """Extract the content modification date from HTML, falling back to the HTTP header.
+
+    Priority:
+        1. <meta property="article:modified_time" content="...">
+        2. <meta property="og:updated_time" content="...">
+        3. JSON-LD <script type="application/ld+json"> "dateModified" key
+           (regex fallback when JSON is malformed)
+        4. HTTP Last-Modified header, parsed to ISO 8601
+        5. Current UTC timestamp
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    tag = soup.find("meta", property="article:modified_time")
+    if tag and tag.get("content"):
+        return tag["content"]
+
+    tag = soup.find("meta", property="og:updated_time")
+    if tag and tag.get("content"):
+        return tag["content"]
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        try:
+            data = json.loads(raw)
+            date = data.get("dateModified") if isinstance(data, dict) else None
+            if date:
+                return date
+        except json.JSONDecodeError:
+            m = re.search(r'"dateModified"\s*:\s*"([^"]+)"', raw)
+            if m:
+                return m.group(1)
+
+    if header_fallback:
+        try:
+            return parsedate_to_datetime(header_fallback).isoformat()
+        except Exception:
+            pass
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def fetch_careers_page(url: str) -> tuple[str, str]:
     """GET the careers page and return (html, last_modified).
 
-    last_modified comes from the HTTP Last-Modified response header.
-    Falls back to current UTC timestamp when the header is absent.
+    last_modified is extracted from the HTML body (meta tags, JSON-LD), falling
+    back to the HTTP Last-Modified header and finally to the current UTC timestamp.
+    The value is always returned as an ISO 8601 string.
     """
     response = requests.get(url, timeout=30)
     response.raise_for_status()
-    last_modified = response.headers.get(
-        "Last-Modified",
-        datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-    )
+    header_lm = response.headers.get("Last-Modified")
+    last_modified = _extract_last_modified_from_html(response.text, header_lm)
     logger.debug("Fetched careers page. Last-Modified: %s", last_modified)
     return response.text, last_modified
 

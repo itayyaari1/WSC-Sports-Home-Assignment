@@ -1,11 +1,11 @@
 import io
-import logging
 
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-logger = logging.getLogger(__name__)
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 SCHEMA = pa.schema([
     ("Index", pa.int32()),
@@ -14,26 +14,18 @@ SCHEMA = pa.schema([
 
 
 def build_parquet(positions: list[str]) -> bytes:
-    """Build an in-memory parquet file from a sorted list of position titles.
-
-    Args:
-        positions: Alphabetically sorted list of position titles.
-
-    Returns:
-        Parquet file as bytes.
+    """Build an in-memory parquet file from sorted position titles.
     """
     if not positions:
         raise ValueError("Cannot build parquet from empty positions list")
 
-    df = pd.DataFrame({
-        "Index": range(1, len(positions) + 1),
-        "Position_Title": positions,
-    })
-
-    # Enforce schema types
-    df["Index"] = df["Index"].astype("int32")
-
-    table = pa.Table.from_pandas(df, schema=SCHEMA, preserve_index=False)
+    table = pa.Table.from_arrays(
+        arrays=[
+            pa.array(range(1, len(positions) + 1), type=pa.int32()),
+            pa.array(positions, type=pa.string()),
+        ],
+        schema=SCHEMA,
+    )
 
     buffer = io.BytesIO()
     pq.write_table(table, buffer, compression="snappy")

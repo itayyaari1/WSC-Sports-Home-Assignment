@@ -1,13 +1,13 @@
 import io
-import logging
 
 import pandas as pd
 import pyarrow.parquet as pq
 from confluent_kafka import Consumer, KafkaError
 
+from shared.logger import get_logger
 from src.config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def create_consumer() -> Consumer:

@@ -1,13 +1,13 @@
-import logging
 import unicodedata
 
 import requests
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from shared.logger import get_logger
 from src.config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ScraperError(Exception):

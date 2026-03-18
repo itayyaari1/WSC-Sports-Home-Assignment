@@ -1,5 +1,4 @@
 import io
-import logging
 from datetime import datetime, timezone
 
 import boto3
@@ -9,9 +8,10 @@ import pyarrow.parquet as pq
 from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from shared.logger import get_logger
 from src.config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ENRICHED_SCHEMA = pa.schema([
     ("Index", pa.int32()),

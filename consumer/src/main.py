@@ -1,17 +1,12 @@
-import logging
 import signal
 import sys
 
+from shared.logger import get_logger
 from src.kafka_consumer import create_consumer, poll_message, commit_offset
 from src.enrichment import enrich_positions
 from src.storage import upload_to_s3
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _shutdown = False
 

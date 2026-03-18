@@ -14,8 +14,8 @@ logs:
 	docker compose logs -f
 
 test:
-	cd producer && pip3 install -r requirements.txt -q && python3 -m pytest tests/ -v
-	cd consumer && pip3 install -r requirements.txt -q && python3 -m pytest tests/ -v
+	cd producer && pip3 install -r requirements.txt -q && PYTHONPATH=$(PWD) python3 -m pytest tests/ -v
+	cd consumer && pip3 install -r requirements.txt -q && PYTHONPATH=$(PWD) python3 -m pytest tests/ -v
 
 local-install:
 	ln -sf $(PWD)/.env producer/.env
@@ -27,10 +27,10 @@ local-infra:
 	docker compose up zookeeper kafka minio minio-init -d
 
 run-producer:
-	cd producer && .venv/bin/python -m src.main
+	cd producer && PYTHONPATH=$(PWD) .venv/bin/python -m src.main
 
 run-consumer:
-	cd consumer && .venv/bin/python -m src.main
+	cd consumer && PYTHONPATH=$(PWD) .venv/bin/python -m src.main
 
 lint:
 	ruff check producer/src consumer/src

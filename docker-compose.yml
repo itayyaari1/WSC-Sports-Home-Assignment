@@ -61,7 +61,9 @@ services:
       "
 
   producer:
-    build: ./producer
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
     depends_on:
       kafka:
         condition: service_healthy
@@ -72,7 +74,9 @@ services:
       CAREERS_URL: https://wsc-sports.com/Careers
 
   consumer:
-    build: ./consumer
+    build:
+      context: .
+      dockerfile: consumer/Dockerfile
     depends_on:
       kafka:
         condition: service_healthy

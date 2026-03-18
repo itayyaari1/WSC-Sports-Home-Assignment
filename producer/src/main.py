@@ -1,16 +1,11 @@
-import logging
 import sys
 
+from shared.logger import get_logger
 from src.scraper import scrape_positions, ScraperError
 from src.parquet_builder import build_parquet
 from src.kafka_producer import create_producer, publish_parquet
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def run():
     """Main producer pipeline: scrape -> parquet -> kafka."""

@@ -1,11 +1,11 @@
-import logging
 import time
 
 from confluent_kafka import Producer, KafkaError, KafkaException
 
+from shared.logger import get_logger
 from src.config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _delivery_callback(err, msg):

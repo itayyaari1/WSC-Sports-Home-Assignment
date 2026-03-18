@@ -7,7 +7,7 @@ class ConsumerSettings(BaseSettings):
     kafka_security_protocol: str = "PLAINTEXT"
     kafka_group_id: str = "wsc-consumer-group"
     kafka_auto_offset_reset: str = "earliest"
-    kafka_poll_timeout: float = 1.0
+    kafka_poll_timeout: float = 10.0
 
     s3_bucket: str = "wsc-positions-data"
     s3_endpoint_url: str | None = "http://localhost:4566"

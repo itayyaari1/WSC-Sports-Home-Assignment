@@ -1,7 +1,5 @@
 import sys
-
 import pandas as pd
-
 from shared.logger import get_logger
 from src.config import settings
 from src.enrichment import enrich_positions

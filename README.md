@@ -99,6 +99,28 @@ s3://wsc-positions-data/
 
 Date-partitioned for efficient querying with tools like Athena or Spark.
 
+## Running Locally
+
+Run the Python services on your host machine with infrastructure (Kafka, MinIO) in Docker.
+
+**Prerequisites:** Docker, Python 3.11+, and on macOS: `brew install librdkafka`
+
+```bash
+# 1. Install dependencies and set up virtual environments
+make local-install
+
+# 2. Start Kafka + MinIO in Docker
+make local-infra
+
+# 3. Run the consumer (Terminal 1) — polls Kafka for messages
+make run-consumer
+
+# 4. Run the producer (Terminal 2) — scrapes, publishes, and exits
+make run-producer
+```
+
+**View output data:** Open the MinIO console at **http://localhost:9001** (login: `minioadmin` / `minioadmin`) and browse `wsc-positions-data/positions/`.
+
 ## Running Tests
 
 ```bash

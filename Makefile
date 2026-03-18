@@ -24,7 +24,7 @@ local-install:
 	python3 -m venv consumer/.venv && consumer/.venv/bin/pip install -r consumer/requirements.txt
 
 local-infra:
-	docker compose up zookeeper kafka localstack -d
+	docker compose up zookeeper kafka minio minio-init -d
 
 run-producer:
 	cd producer && .venv/bin/python -m src.main

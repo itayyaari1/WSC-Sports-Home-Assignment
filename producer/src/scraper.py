@@ -38,6 +38,16 @@ def normalize_title(title: str) -> str:
     return title
 
 
+def strip_view_position_suffix(text: str) -> str:
+    """Remove trailing CTA text while preserving the original title."""
+    cta_suffix = "view position"
+    normalized = normalize_title(text)
+    if normalized.lower().endswith(cta_suffix):
+        # Remove only the trailing CTA, keep the title exactly as shown.
+        normalized = normalized[: -len(cta_suffix)].rstrip()
+    return normalized
+
+
 def parse_positions(html: str) -> list[str]:
     """Extract position titles from the careers page HTML."""
     soup = BeautifulSoup(html, "html.parser")
@@ -47,12 +57,10 @@ def parse_positions(html: str) -> list[str]:
     # Primary strategy: find links containing "/career/" in href
     career_links = soup.find_all("a", href=lambda h: h and "/career/" in h.lower())
     for link in career_links:
-        # The first div inside the link contains the job title
-        title_div = link.find("div")
-        if title_div:
-            title = normalize_title(title_div.get_text())
-            if title and title.lower() != "view position":
-                positions.append(title)
+        link_text = normalize_title(link.get_text(" ", strip=True))
+        title = strip_view_position_suffix(link_text)
+        if title and title.lower() != "view position":
+            positions.append(title)
 
     # Fallback: if no positions found with primary strategy, try broader search
     if not positions:
@@ -60,11 +68,10 @@ def parse_positions(html: str) -> list[str]:
         for li in soup.find_all("li"):
             link = li.find("a")
             if link and link.get("href", ""):
-                divs = link.find_all("div")
-                if len(divs) >= 1:
-                    title = normalize_title(divs[0].get_text())
-                    if title and title.lower() != "view position":
-                        positions.append(title)
+                link_text = normalize_title(link.get_text(" ", strip=True))
+                title = strip_view_position_suffix(link_text)
+                if title and title.lower() != "view position":
+                    positions.append(title)
 
     return positions
 

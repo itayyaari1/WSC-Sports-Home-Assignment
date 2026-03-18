@@ -1,7 +1,13 @@
 import pytest
 from unittest.mock import patch
 
-from src.scraper import parse_positions, normalize_title, scrape_positions, ScraperError
+from src.scraper import (
+    parse_positions,
+    normalize_title,
+    strip_view_position_suffix,
+    scrape_positions,
+    ScraperError,
+)
 
 
 SAMPLE_HTML = """
@@ -42,6 +48,14 @@ class TestNormalizeTitle:
         assert normalize_title("") == ""
 
 
+class TestStripViewPositionSuffix:
+    def test_strips_trailing_cta(self):
+        assert strip_view_position_suffix("Backend Engineer View Position") == "Backend Engineer"
+
+    def test_keeps_title_when_no_cta(self):
+        assert strip_view_position_suffix("Backend Engineer") == "Backend Engineer"
+
+
 class TestParsePositions:
     def test_extracts_positions(self):
         positions = parse_positions(SAMPLE_HTML)
@@ -53,6 +67,15 @@ class TestParsePositions:
     def test_excludes_view_position_text(self):
         positions = parse_positions(SAMPLE_HTML)
         assert "View Position" not in positions
+
+    def test_handles_combined_title_and_cta_text(self):
+        html = """
+        <html><body>
+          <a href="/career/backend-engineer">Backend Engineer View Position</a>
+        </body></html>
+        """
+        positions = parse_positions(html)
+        assert positions == ["Backend Engineer"]
 
     def test_empty_html_returns_empty_list(self):
         positions = parse_positions(EMPTY_HTML)

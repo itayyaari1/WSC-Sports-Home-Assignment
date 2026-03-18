@@ -47,6 +47,9 @@ def poll_message(consumer: Consumer) -> pd.DataFrame | None:
         if msg.error().code() == KafkaError._PARTITION_EOF:
             logger.debug("Reached end of partition")
             return None
+        if msg.error().code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
+            logger.debug("Topic not yet available, waiting...")
+            return None
         logger.error("Consumer error: %s", msg.error())
         raise Exception(f"Kafka consumer error: {msg.error()}")
 

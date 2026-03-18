@@ -1,1 +1,7 @@
 .env
+producer/.env
+consumer/.env
+producer/.venv/
+consumer/.venv/
+**/__pycache__/
+**/*.pyc

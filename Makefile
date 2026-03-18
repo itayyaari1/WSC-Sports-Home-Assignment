@@ -1,4 +1,4 @@
-.PHONY: build up down logs test lint clean
+.PHONY: build up down logs test lint clean local-install local-infra run-producer run-consumer
 
 build:
 	docker compose build
@@ -14,8 +14,23 @@ logs:
 	docker compose logs -f
 
 test:
-	cd producer && pip install -r requirements.txt -q && python -m pytest tests/ -v
-	cd consumer && pip install -r requirements.txt -q && python -m pytest tests/ -v
+	cd producer && pip3 install -r requirements.txt -q && python3 -m pytest tests/ -v
+	cd consumer && pip3 install -r requirements.txt -q && python3 -m pytest tests/ -v
+
+local-install:
+	ln -sf $(PWD)/.env producer/.env
+	ln -sf $(PWD)/.env consumer/.env
+	python3 -m venv producer/.venv && producer/.venv/bin/pip install -r producer/requirements.txt
+	python3 -m venv consumer/.venv && consumer/.venv/bin/pip install -r consumer/requirements.txt
+
+local-infra:
+	docker compose up zookeeper kafka localstack -d
+
+run-producer:
+	cd producer && .venv/bin/python -m src.main
+
+run-consumer:
+	cd consumer && .venv/bin/python -m src.main
 
 lint:
 	ruff check producer/src consumer/src

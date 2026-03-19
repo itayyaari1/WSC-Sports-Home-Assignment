@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ConsumerSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic: str = "wsc-positions"
     kafka_security_protocol: str = "PLAINTEXT"
@@ -17,10 +19,6 @@ class ConsumerSettings(BaseSettings):
 
     careers_url: str = "https://wsc-sports.com/Careers"
     url_cache_path: str = "url_cache.json"
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
 
 
 settings = ConsumerSettings()

@@ -1,5 +1,4 @@
 import sys
-
 from shared.logger import get_logger
 from src.scraper import make_scraper, ScraperError
 from src.parquet_builder import ParquetBuilder

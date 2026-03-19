@@ -5,37 +5,11 @@ from bs4 import BeautifulSoup
 
 from shared.logger import get_logger
 from src.config import settings
+from src.consts import CATEGORY_KEYWORDS, SENIORITY_KEYWORDS, SENIORITY_LEVEL_KEYWORDS
 from src.models import BasePosition, EnrichedPosition
 from src.url_cache import load_cache
 
 logger = get_logger(__name__)
-
-SENIORITY_KEYWORDS = {"senior", "lead", "architect", "manager", "principal"}
-
-CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "Engineering": [
-        "engineer", "developer", "devops", "backend", "frontend", "data",
-        "ml", "ai", "qa", "architect", "infrastructure", "algorithm",
-        "c++", "cloud", "finops", "nlp", "genai",
-    ],
-    "Design": [
-        "design", "ux", "ui", "creative", "graphic", "motion", "visual", "animation",
-    ],
-    "Product": [
-        "product", "program manager", "scrum", "project manager", "evangelist",
-    ],
-    "Operations": [
-        "operations", "hr", "finance", "office", "admin", "people", "recruit",
-        "sales", "account", "marketing", "business", "legal", "partnerships",
-        "controller", "counsel", "bizdev",
-    ],
-}
-
-_SENIORITY_LEVEL_KEYWORDS: dict[str, list[str]] = {
-    "Junior": ["junior", "intern", "entry", "associate", "graduate"],
-    "Senior": ["senior", "sr.", "staff"],
-    "Lead": ["lead", "principal", "head", "director", "vp", "chief"],
-}
 
 
 def fetch_position_html(url: str) -> str | None:
@@ -97,7 +71,7 @@ def classify_seniority_level(req_block: BeautifulSoup | None, years: int) -> str
     # years == 0: fall back to keyword scan of the requirements text
     if req_block:
         req_text = req_block.get_text(" ", strip=True).lower()
-        for level, keywords in _SENIORITY_LEVEL_KEYWORDS.items():
+        for level, keywords in SENIORITY_LEVEL_KEYWORDS.items():
             if any(kw in req_text for kw in keywords):
                 return level
 

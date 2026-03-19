@@ -6,3 +6,4 @@ consumer/.venv/
 **/__pycache__/
 **/*.pyc
 .vscode/launch.json
+consumer/url_cache.json

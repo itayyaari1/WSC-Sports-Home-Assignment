@@ -24,3 +24,5 @@ SENIORITY_LEVEL_KEYWORDS: dict[str, list[str]] = {
     "Senior": ["senior", "sr.", "staff"],
     "Lead": ["lead", "principal", "head", "director", "vp", "chief"],
 }
+
+SENIORITY_SCORES: dict[str, int] = {"Junior": 5, "Mid": 10, "Senior": 15, "Lead": 20}

@@ -99,7 +99,6 @@ WSC-Sports-Home-Assignment/
 │           ├── producer-job.yaml     # One-shot Kubernetes Job
 │           └── consumer-deployment.yaml  # Long-running Kubernetes Deployment
 │
-├── terraform/                     # AWS infrastructure (Phase 2)
 ├── docker-compose.yml             # Full local stack (Kafka + MinIO + Producer + Consumer)
 ├── .env.example                   # Environment variable reference
 └── Makefile                       # All convenience commands

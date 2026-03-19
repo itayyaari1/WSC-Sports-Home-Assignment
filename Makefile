@@ -89,12 +89,14 @@ k8s-down:
 k8s-status:
 	kubectl get pods,jobs,deployments -l app.kubernetes.io/instance=wsc-pipeline
 
-# Trigger a new producer run by spawning a fresh Job from the existing Job spec.
-# Uses a timestamp suffix so each run gets a unique name and doesn't conflict
-# with previous completed Jobs.
+# Re-run the producer by deleting the existing completed Job and recreating it.
+# Kubernetes Jobs are immutable once created, so delete + recreate is the only way
+# to re-run with the same job name.
 k8s-run-producer:
-	kubectl create job wsc-pipeline-producer-$$(date +%s) \
-		--from=job/wsc-pipeline-producer
+	kubectl delete job wsc-pipeline-producer --ignore-not-found
+	helm template wsc-pipeline helm/wsc-pipeline/ \
+		--show-only templates/producer-job.yaml \
+		| kubectl create -f -
 
 # Tail logs from the producer Job (one-shot, reads all containers)
 k8s-logs-producer:

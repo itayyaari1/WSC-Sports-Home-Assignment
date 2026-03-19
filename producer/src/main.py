@@ -1,9 +1,9 @@
 import sys
 
 from shared.logger import get_logger
-from src.scraper import scrape_positions, ScraperError
-from src.parquet_builder import build_parquet
-from src.kafka_producer import create_producer, publish_parquet
+from src.scraper import make_scraper, ScraperError
+from src.parquet_builder import ParquetBuilder
+from src.kafka_producer import PositionProducer
 
 logger = get_logger(__name__)
 
@@ -12,23 +12,25 @@ def run():
     logger.info("Starting WSC Sports position producer")
 
     # Step 1: Scrape positions
+    scraper = make_scraper()
     try:
-        positions = scrape_positions()
+        positions = scraper.scrape()
     except ScraperError as e:
         logger.error("Scraping failed: %s", e)
         sys.exit(1)
 
     # Step 2: Build parquet
+    builder = ParquetBuilder()
     try:
-        parquet_bytes = build_parquet(positions)
+        parquet_bytes = builder.build(positions)
     except ValueError as e:
         logger.error("Parquet build failed: %s", e)
         sys.exit(1)
 
     # Step 3: Publish to Kafka
-    producer = create_producer()
+    producer = PositionProducer()
     try:
-        publish_parquet(producer, parquet_bytes, record_count=len(positions))
+        producer.publish(parquet_bytes, record_count=len(positions))
     except Exception as e:
         logger.error("Kafka publish failed: %s", e)
         sys.exit(1)

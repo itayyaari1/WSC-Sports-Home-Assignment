@@ -7,33 +7,35 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-SCHEMA = pa.schema([
-    ("Index", pa.int32()),
-    ("Position_Title", pa.string()),
-])
 
+class ParquetBuilder:
+    """Serializes position lists to in-memory Parquet bytes."""
 
-def build_parquet(positions: list[str]) -> bytes:
-    """Build an in-memory parquet file from sorted position titles.
-    """
-    if not positions:
-        raise ValueError("Cannot build parquet from empty positions list")
+    SCHEMA = pa.schema([
+        ("Index", pa.int32()),
+        ("Position_Title", pa.string()),
+    ])
 
-    table = pa.Table.from_arrays(
-        arrays=[
-            pa.array(range(1, len(positions) + 1), type=pa.int32()),
-            pa.array(positions, type=pa.string()),
-        ],
-        schema=SCHEMA,
-    )
+    def build(self, positions: list[str]) -> bytes:
+        """Build an in-memory parquet file from sorted position titles."""
+        if not positions:
+            raise ValueError("Cannot build parquet from empty positions list")
 
-    buffer = io.BytesIO()
-    pq.write_table(table, buffer, compression="snappy")
-    parquet_bytes = buffer.getvalue()
+        table = pa.Table.from_arrays(
+            arrays=[
+                pa.array(range(1, len(positions) + 1), type=pa.int32()),
+                pa.array(positions, type=pa.string()),
+            ],
+            schema=self.SCHEMA,
+        )
 
-    logger.info(
-        "Built parquet file: %d positions, %d bytes",
-        len(positions),
-        len(parquet_bytes),
-    )
-    return parquet_bytes
+        buffer = io.BytesIO()
+        pq.write_table(table, buffer, compression="snappy")
+        parquet_bytes = buffer.getvalue()
+
+        logger.info(
+            "Built parquet file: %d positions, %d bytes",
+            len(positions),
+            len(parquet_bytes),
+        )
+        return parquet_bytes

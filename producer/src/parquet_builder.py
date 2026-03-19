@@ -12,17 +12,21 @@ class ParquetBuilder:
     SCHEMA = pa.schema([
         ("Index", pa.int32()),
         ("Position_Title", pa.string()),
+        ("Position_URL", pa.string()),
     ])
 
-    def build(self, positions: list[str]) -> bytes:
-        """Build an in-memory parquet file from sorted position titles."""
+    def build(self, positions: list[tuple[str, str]]) -> bytes:
+        """Build an in-memory parquet file from sorted (title, url) pairs."""
         if not positions:
             raise ValueError("Cannot build parquet from empty positions list")
+
+        titles, urls = zip(*positions)
 
         table = pa.Table.from_arrays(
             arrays=[
                 pa.array(range(1, len(positions) + 1), type=pa.int32()),
-                pa.array(positions, type=pa.string()),
+                pa.array(titles, type=pa.string()),
+                pa.array(urls, type=pa.string()),
             ],
             schema=self.SCHEMA,
         )

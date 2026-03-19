@@ -89,8 +89,8 @@ WSC-Sports-Home-Assignment/
 │
 ├── helm/                          # Kubernetes deployment (Minikube / any cluster)
 │   └── wsc-pipeline/
-│       ├── Chart.yaml             # Umbrella chart — depends on bitnami/kafka + bitnami/minio
-│       ├── values.yaml            # All configurable values
+│       ├── Chart.yaml              # Umbrella chart — depends on bitnami/kafka + bitnami/minio
+│       ├── values.yaml           # All configurable values
 │       └── templates/
 │           ├── _helpers.tpl       # Shared template helpers
 │           ├── configmap.yaml     # Shared env vars for all pods

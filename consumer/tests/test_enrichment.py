@@ -82,12 +82,12 @@ class TestEnrichPositions:
 
     @patch("src.enrichment.save_cache")
     @patch("src.enrichment.fetch_position_html", return_value=None)
-    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}, "positions_enrichment": {}})
+    @patch("src.enrichment.load_cache", return_value={"positions_enrichment": {}})
     def test_enriches_list_of_base_positions(self, _mock_cache, _mock_fetch, _mock_save):
         positions = [
-            BasePosition(index=1, title="Senior Backend Engineer"),
-            BasePosition(index=2, title="Junior UX Designer"),
-            BasePosition(index=3, title="Office Manager"),
+            BasePosition(index=1, title="Senior Backend Engineer", url="https://example.com/career/1"),
+            BasePosition(index=2, title="Junior UX Designer", url="https://example.com/career/2"),
+            BasePosition(index=3, title="Office Manager", url="https://example.com/career/3"),
         ]
         enriched = enrich_positions(positions)
 
@@ -98,9 +98,9 @@ class TestEnrichPositions:
 
     @patch("src.enrichment.save_cache")
     @patch("src.enrichment.fetch_position_html", return_value=None)
-    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}, "positions_enrichment": {}})
+    @patch("src.enrichment.load_cache", return_value={"positions_enrichment": {}})
     def test_complexity_scores_are_valid_range(self, _mock_cache, _mock_fetch, _mock_save):
-        positions = [BasePosition(index=1, title="Backend Engineer")]
+        positions = [BasePosition(index=1, title="Backend Engineer", url="https://example.com/career/1")]
         enriched = enrich_positions(positions)
         assert 0 <= enriched[0].complexity_score <= 100
 
@@ -126,12 +126,11 @@ class TestEnrichPositions:
         }
 
         mock_load_cache.return_value = {
-            "title_mapping": {"Backend Engineer": "https://example.com/career/1"},
             "positions_enrichment": {req_hash: cached_enrichment},
         }
         mock_fetch.return_value = position_html
 
-        positions = [BasePosition(index=1, title="Backend Engineer")]
+        positions = [BasePosition(index=1, title="Backend Engineer", url="https://example.com/career/1")]
         enriched = enrich_positions(positions)
 
         assert len(enriched) == 1

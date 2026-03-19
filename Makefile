@@ -1,5 +1,5 @@
-.PHONY: build up down logs test test-docker lint clean local-install local-infra run-producer run-consumer \
-        minikube-start minikube-build minikube-dashboard helm-deps k8s-up k8s-down k8s-status k8s-logs-producer k8s-logs-consumer
+.PHONY: build up down logs logs-producer test test-docker lint clean local-install local-infra run-producer run-producer-docker run-consumer \
+        minikube-start minikube-build minikube-dashboard helm-deps k8s-up k8s-down k8s-status k8s-run-producer k8s-logs-producer k8s-logs-consumer
 
 build:
 	docker compose build
@@ -12,7 +12,10 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f
+	docker compose logs -f --tail=50
+
+logs-producer:
+	docker compose logs producer
 
 test:
 	cd producer && pip3 install -r requirements.txt -q && PYTHONPATH=$(PWD) python3 -m pytest tests/ -v
@@ -33,6 +36,10 @@ local-infra:
 
 run-producer:
 	cd producer && PYTHONPATH=$(PWD) .venv/bin/python -m src.main
+
+run-producer-docker:
+	docker compose up zookeeper kafka -d --wait
+	docker compose run --rm producer
 
 run-consumer:
 	cd consumer && PYTHONPATH=$(PWD) .venv/bin/python -m src.main
@@ -81,6 +88,13 @@ k8s-down:
 # Quick overview of all pipeline pods, jobs, and deployments
 k8s-status:
 	kubectl get pods,jobs,deployments -l app.kubernetes.io/instance=wsc-pipeline
+
+# Trigger a new producer run by spawning a fresh Job from the existing Job spec.
+# Uses a timestamp suffix so each run gets a unique name and doesn't conflict
+# with previous completed Jobs.
+k8s-run-producer:
+	kubectl create job wsc-pipeline-producer-$$(date +%s) \
+		--from=job/wsc-pipeline-producer
 
 # Tail logs from the producer Job (one-shot, reads all containers)
 k8s-logs-producer:

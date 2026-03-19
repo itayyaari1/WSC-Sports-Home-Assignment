@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class BasePosition(BaseModel):
     index: int
     title: str
+    url: str
 
 
 class EnrichedPosition(BasePosition):

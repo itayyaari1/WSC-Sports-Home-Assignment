@@ -64,15 +64,23 @@ class TestParsePositions:
     def test_extracts_positions(self):
         scraper = make_scraper()
         positions = scraper._parse_positions(SAMPLE_HTML)
+        titles = [t for t, _ in positions]
         assert len(positions) == 3
-        assert "Backend Engineer" in positions
-        assert "Senior Frontend Developer" in positions
-        assert "Office Manager" in positions
+        assert "Backend Engineer" in titles
+        assert "Senior Frontend Developer" in titles
+        assert "Office Manager" in titles
+
+    def test_extracts_urls(self):
+        scraper = make_scraper()
+        positions = scraper._parse_positions(SAMPLE_HTML)
+        urls = [u for _, u in positions]
+        assert all(u.startswith("https://example.com/career/") for u in urls)
 
     def test_excludes_view_position_text(self):
         scraper = make_scraper()
         positions = scraper._parse_positions(SAMPLE_HTML)
-        assert "View Position" not in positions
+        titles = [t for t, _ in positions]
+        assert "View Position" not in titles
 
     def test_prefers_link_text_span_when_present(self):
         html = """
@@ -91,7 +99,9 @@ class TestParsePositions:
         """
         scraper = make_scraper()
         positions = scraper._parse_positions(html)
-        assert positions == ["Account Manager"]
+        assert len(positions) == 1
+        assert positions[0][0] == "Account Manager"
+        assert positions[0][1] == "https://example.com/career/account-manager-2/"
 
     def test_handles_combined_title_and_cta_text(self):
         html = """
@@ -101,7 +111,9 @@ class TestParsePositions:
         """
         scraper = make_scraper()
         positions = scraper._parse_positions(html)
-        assert positions == ["Backend Engineer"]
+        assert len(positions) == 1
+        assert positions[0][0] == "Backend Engineer"
+        assert positions[0][1] == "https://example.com/career/backend-engineer"
 
     def test_empty_html_returns_empty_list(self):
         scraper = make_scraper()
@@ -115,7 +127,8 @@ class TestScrapePositions:
         with patch.object(scraper, "_fetch_page", return_value=SAMPLE_HTML):
             positions = scraper.scrape()
 
-        assert positions == [
+        titles = [t for t, _ in positions]
+        assert titles == [
             "Backend Engineer",
             "Office Manager",
             "Senior Frontend Developer",

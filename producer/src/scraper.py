@@ -1,3 +1,5 @@
+from urllib.parse import urljoin, urlparse
+
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -39,18 +41,25 @@ class PositionScraper:
         """Fetch the careers page HTML content with retry logic."""
         return self._make_fetch()()
 
-    def _parse_positions(self, html: str) -> list[str]:
-        """Extract position titles from the careers page HTML."""
+    def _base_url(self) -> str:
+        parsed = urlparse(self.url)
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    def _parse_positions(self, html: str) -> list[tuple[str, str]]:
+        """Extract (title, url) pairs from the careers page HTML."""
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
-        positions = []
+        base = self._base_url()
+        positions: list[tuple[str, str]] = []
 
         career_links = soup.find_all("a", href=lambda h: h and "/career/" in h.lower())
         for link in career_links:
             title = extract_title_from_link(link)
             if title and title.lower() != "view position":
-                positions.append(title)
+                href = link.get("href", "")
+                url = urljoin(base, href) if not href.startswith("http") else href
+                positions.append((title, url))
 
         if not positions:
             logger.warning("Primary selector found no positions, trying fallback strategy")
@@ -59,12 +68,14 @@ class PositionScraper:
                 if link and link.get("href", ""):
                     title = extract_title_from_link(link)
                     if title and title.lower() != "view position":
-                        positions.append(title)
+                        href = link.get("href", "")
+                        url = urljoin(base, href) if not href.startswith("http") else href
+                        positions.append((title, url))
 
         return positions
 
-    def scrape(self) -> list[str]:
-        """Scrape, deduplicate-aware, and return sorted position titles."""
+    def scrape(self) -> list[tuple[str, str]]:
+        """Scrape and return sorted (title, url) pairs."""
         logger.info("Scraping positions from %s", self.url)
 
         try:
@@ -79,7 +90,7 @@ class PositionScraper:
                 "No positions found on careers page. The page structure may have changed."
             )
 
-        positions.sort(key=str.lower)
+        positions.sort(key=lambda p: p[0].lower())
 
         logger.info("Found %d positions", len(positions))
         return positions

@@ -4,12 +4,10 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from shared.logger import get_logger
-from src.config import settings
 from src.enrichment import enrich_positions
 from src.kafka_consumer import commit_offset, create_consumer, poll_message
 from src.models import BasePosition, EnrichedPosition
 from src.storage import upload_to_s3
-from src.url_cache import check_and_refresh_cache
 
 logger = get_logger(__name__)
 
@@ -17,7 +15,7 @@ logger = get_logger(__name__)
 def _df_to_positions(df: pd.DataFrame) -> list[BasePosition]:
     """Convert a raw positions DataFrame into a list of BasePosition models."""
     return [
-        BasePosition(index=int(row.Index), title=str(row.Position_Title))
+        BasePosition(index=int(row.Index), title=str(row.Position_Title), url=str(row.Position_URL))
         for row in df.itertuples(index=False)
     ]
 
@@ -50,9 +48,6 @@ def run():
 
             if df is None:
                 continue
-
-            # Check and refresh URL cache
-            check_and_refresh_cache(settings.careers_url, settings.url_cache_path)
 
             # Convert DataFrame rows to Position models
             positions = _df_to_positions(df)

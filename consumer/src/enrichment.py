@@ -100,7 +100,6 @@ def calculate_complexity_score(
 
 def _enrich_one(
     position: BasePosition,
-    title_mapping: dict[str, str],
     cache: dict,
 ) -> EnrichedPosition:
     """Enrich a single BasePosition by scraping its detail page.
@@ -110,7 +109,7 @@ def _enrich_one(
     re-computing. New results are written into `cache` in memory so the
     caller can do a single disk flush after all positions are processed.
     """
-    url = title_mapping.get(position.title)
+    url = position.url or None
 
     years = 0
     skills = 0
@@ -131,6 +130,7 @@ def _enrich_one(
                     return EnrichedPosition(
                         index=position.index,
                         title=position.title,
+                        url=position.url,
                         **cached,
                     )
 
@@ -139,7 +139,7 @@ def _enrich_one(
             else:
                 logger.debug("No requirements block found for: %s", position.title)
     else:
-        logger.warning("No URL found for position: %s", position.title)
+        logger.warning("No URL available for position: %s", position.title)
 
     category = classify_category(position.title)
     seniority_level = classify_seniority_level(req_block, years)
@@ -160,6 +160,7 @@ def _enrich_one(
     return EnrichedPosition(
         index=position.index,
         title=position.title,
+        url=position.url,
         **enrichment_fields,
     )
 
@@ -170,16 +171,11 @@ def enrich_positions(positions: list[BasePosition]) -> list[EnrichedPosition]:
         logger.warning("Received empty positions list for enrichment")
         return []
 
-    cache: dict = load_cache(settings.url_cache_path) or {
-        "page_hash": "",
-        "title_mapping": {},
-        "positions_enrichment": {},
-    }
-    title_mapping: dict[str, str] = cache.get("title_mapping", {})
+    cache: dict = load_cache(settings.url_cache_path) or {"positions_enrichment": {}}
 
     logger.info("Enriching %d positions", len(positions))
 
-    enriched = [_enrich_one(p, title_mapping, cache) for p in positions]
+    enriched = [_enrich_one(p, cache) for p in positions]
 
     save_cache(settings.url_cache_path, cache)
     return enriched

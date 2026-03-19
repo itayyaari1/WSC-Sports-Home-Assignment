@@ -1,8 +1,6 @@
+import hashlib
 import json
-import re
 import unicodedata
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -13,7 +11,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-CacheData = dict  # {"last_careers_update": str, "title_mapping": dict[str, str]}
+CacheData = dict  # {"page_hash": str, "title_mapping": dict[str, str]}
 
 
 def _normalize_title(title: str) -> str:
@@ -29,61 +27,27 @@ def _base_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _extract_last_modified_from_html(html: str, header_fallback: str | None) -> str:
-    """Extract the content modification date from HTML, falling back to the HTTP header.
+def _compute_jobs_section_hash(html: str) -> str:
+    """Return a SHA-256 digest of the jobs listing section only.
 
-    Priority:
-        1. <meta property="article:modified_time" content="...">
-        2. <meta property="og:updated_time" content="...">
-        3. JSON-LD <script type="application/ld+json"> "dateModified" key
-           (regex fallback when JSON is malformed)
-        4. HTTP Last-Modified header, parsed to ISO 8601
-        5. Current UTC timestamp
+    Targets <div id="response_jobs"> which contains exactly the career
+    position links and nothing dynamic (no auth tokens, no timestamps).
+    Falls back to an empty string if the element is not found.
     """
     soup = BeautifulSoup(html, "html.parser")
-
-    tag = soup.find("meta", property="article:modified_time")
-    if tag and tag.get("content"):
-        return tag["content"]
-
-    tag = soup.find("meta", property="og:updated_time")
-    if tag and tag.get("content"):
-        return tag["content"]
-
-    for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or ""
-        try:
-            data = json.loads(raw)
-            date = data.get("dateModified") if isinstance(data, dict) else None
-            if date:
-                return date
-        except json.JSONDecodeError:
-            m = re.search(r'"dateModified"\s*:\s*"([^"]+)"', raw)
-            if m:
-                return m.group(1)
-
-    if header_fallback:
-        try:
-            return parsedate_to_datetime(header_fallback).isoformat()
-        except Exception:
-            pass
-
-    return datetime.now(timezone.utc).isoformat()
+    jobs_div = soup.find(id="response_jobs")
+    if jobs_div is None:
+        logger.warning("Could not find #response_jobs in page HTML; hash will be empty")
+        return ""
+    return hashlib.sha256(str(jobs_div).encode()).hexdigest()
 
 
-def fetch_careers_page(url: str) -> tuple[str, str]:
-    """GET the careers page and return (html, last_modified).
-
-    last_modified is extracted from the HTML body (meta tags, JSON-LD), falling
-    back to the HTTP Last-Modified header and finally to the current UTC timestamp.
-    The value is always returned as an ISO 8601 string.
-    """
+def fetch_careers_page(url: str) -> str:
+    """GET the careers page and return the HTML."""
     response = requests.get(url, timeout=30)
     response.raise_for_status()
-    header_lm = response.headers.get("Last-Modified")
-    last_modified = _extract_last_modified_from_html(response.text, header_lm)
-    logger.debug("Fetched careers page. Last-Modified: %s", last_modified)
-    return response.text, last_modified
+    logger.debug("Fetched careers page.")
+    return response.text
 
 
 def extract_position_urls(html: str, careers_url: str) -> dict[str, str]:
@@ -133,11 +97,11 @@ def load_cache(path: str) -> CacheData | None:
         return None
 
 
-def save_cache(path: str, last_careers_update: str, title_mapping: dict[str, str]) -> None:
+def save_cache(path: str, page_hash: str, title_mapping: dict[str, str]) -> None:
     """Write the cache JSON to disk."""
     cache_path = Path(path)
     data: CacheData = {
-        "last_careers_update": last_careers_update,
+        "page_hash": page_hash,
         "title_mapping": title_mapping,
     }
     try:
@@ -158,28 +122,27 @@ def check_and_refresh_cache(careers_url: str, cache_path: str) -> CacheData:
     cache = load_cache(cache_path)
 
     try:
-        html, last_modified = fetch_careers_page(careers_url)
+        html = fetch_careers_page(careers_url)
     except Exception as e:
         logger.error("Could not fetch careers page for cache check: %s", e)
-        return cache or {"last_careers_update": "", "title_mapping": {}}
+        return cache or {"page_hash": "", "title_mapping": {}}
 
-    cached_date = (cache or {}).get("last_careers_update", "")
-    if cache is not None and cached_date == last_modified:
-        logger.info("Cache is up to date (last_careers_update=%s)", last_modified)
+    page_hash = _compute_jobs_section_hash(html)
+    cached_hash = (cache or {}).get("page_hash", "")
+    if cache is not None and cached_hash == page_hash:
+        logger.info("Cache is up to date (jobs section hash unchanged)")
         return cache
 
     logger.info(
-        "Cache %s. Rebuilding (page date=%s, cached date=%s)",
+        "Cache %s. Rebuilding (jobs section changed)",
         "missing" if cache is None else "outdated",
-        last_modified,
-        cached_date,
     )
 
     try:
         title_mapping = extract_position_urls(html, careers_url)
     except Exception as e:
         logger.error("Failed to extract position URLs: %s", e)
-        return cache or {"last_careers_update": "", "title_mapping": {}}
+        return cache or {"page_hash": "", "title_mapping": {}}
 
-    save_cache(cache_path, last_modified, title_mapping)
-    return {"last_careers_update": last_modified, "title_mapping": title_mapping}
+    save_cache(cache_path, page_hash, title_mapping)
+    return {"page_hash": page_hash, "title_mapping": title_mapping}

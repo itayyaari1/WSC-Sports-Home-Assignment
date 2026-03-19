@@ -161,73 +161,143 @@ make run-producer
 
 ## Running via Kubernetes (Minikube)
 
-Deploys the full pipeline on a local Kubernetes cluster using Helm.
+Deploys the full pipeline on a local Kubernetes cluster using a Helm chart. All infrastructure runs as plain Kubernetes manifests — no external chart dependencies — using the same Docker Hub images as `docker-compose.yml`.
 
-**Prerequisites:**
+### Prerequisites
+
 ```bash
 brew install minikube helm kubectl
 ```
 
-The Helm chart deploys:
-- **Kafka** (Bitnami chart, KRaft mode — no ZooKeeper)
-- **MinIO** (Bitnami chart, standalone mode)
-- **MinIO init Job** — creates the `wsc-positions-data` bucket (Helm post-install hook)
-- **Producer** — Kubernetes Job (one-shot, waits for Kafka via init container)
-- **Consumer** — Kubernetes Deployment (long-running, waits for Kafka + MinIO via init containers)
+### What gets deployed
 
-### Step-by-step deployment
+| Pod | Type | Image |
+|-----|------|-------|
+| `wsc-pipeline-zookeeper` | Deployment | `confluentinc/cp-zookeeper:7.5.0` |
+| `wsc-pipeline-kafka` | StatefulSet | `confluentinc/cp-kafka:7.5.0` |
+| `wsc-pipeline-minio` | Deployment | `minio/minio:latest` |
+| `wsc-pipeline-minio-init` | Job (hook) | `minio/mc:latest` — creates the S3 bucket |
+| `wsc-pipeline-producer` | Job (one-shot) | `wsc-producer` (built locally) |
+| `wsc-pipeline-consumer` | Deployment | `wsc-consumer` (built locally) |
+
+Startup order is enforced by init containers:
+- Kafka waits for ZooKeeper
+- Producer waits for Kafka
+- Consumer waits for both Kafka and MinIO
+
+---
+
+### Step 1 — Start Minikube
 
 ```bash
-# 1. Start Minikube with enough resources for Kafka + MinIO
 make minikube-start
+```
 
-# 2. Build producer & consumer images inside Minikube's Docker daemon
-#    (imagePullPolicy: Never — no registry needed)
+This starts a Minikube cluster with 4 CPUs and 6 GB RAM. Takes ~1 minute on first run.
+
+---
+
+### Step 2 — Build the application images
+
+```bash
 make minikube-build
+```
 
-# 3. Pull Bitnami sub-chart dependencies and deploy everything
+This points your Docker CLI at Minikube's internal daemon and builds both `wsc-producer` and `wsc-consumer` images directly inside it. `imagePullPolicy: Never` in the Helm chart means Kubernetes uses these local images without needing a registry.
+
+---
+
+### Step 3 — Deploy everything
+
+```bash
 make k8s-up
 ```
 
-`make k8s-up` takes 3–5 minutes on first run (pulls Bitnami images). It blocks until all pods are healthy.
+Runs `helm upgrade --install` with a 10-minute timeout. On first run it pulls the infrastructure images (`cp-zookeeper`, `cp-kafka`, `minio/minio`) from Docker Hub — this takes 3–5 minutes. The command blocks until all pods are healthy.
 
-### Inspecting the deployment
+Expected output when complete:
+```
+Release "wsc-pipeline" has been upgraded. Happy Helming!
+```
+
+---
+
+### Step 4 — Check the status
 
 ```bash
-# Overview of all pods, jobs, and deployments
 make k8s-status
+```
 
-# Producer logs (scraping + Kafka publish)
+Expected healthy state:
+```
+NAME                                          READY   STATUS      AGE
+pod/wsc-pipeline-zookeeper-xxx               1/1     Running     5m
+pod/wsc-pipeline-kafka-0                     1/1     Running     5m
+pod/wsc-pipeline-minio-xxx                   1/1     Running     5m
+pod/wsc-pipeline-producer-xxx                0/1     Completed   5m   ← ran and exited OK
+pod/wsc-pipeline-consumer-xxx                1/1     Running     5m
+
+job.batch/wsc-pipeline-producer              1/1     Complete    5m
+deployment.apps/wsc-pipeline-consumer        1/1     Running     5m
+```
+
+---
+
+### Step 5 — Inspect the logs
+
+```bash
+# See the producer scrape careers page and publish to Kafka
 make k8s-logs-producer
 
-# Consumer logs (streaming — enrich + upload)
+# Stream the consumer enriching positions and uploading to MinIO
 make k8s-logs-consumer
-
-# Open the Kubernetes dashboard in your browser
-minikube dashboard
 ```
 
-### Verifying S3 output in MinIO
+---
+
+### Step 6 — View output in MinIO
+
+Port-forward the MinIO console to your localhost (keep this terminal open):
 
 ```bash
-# Port-forward MinIO API
-kubectl port-forward svc/wsc-pipeline-minio 9000:9000 &
-
-# List uploaded parquet files
-mc alias set k8s http://localhost:9000 minioadmin minioadmin
-mc ls k8s/wsc-positions-data/positions/ --recursive
+kubectl port-forward svc/wsc-pipeline-minio 9001:9001
 ```
 
-Or open the MinIO console:
+Then open **http://localhost:9001** in your browser.  
+Login: `minioadmin` / `minioadmin`  
+Navigate to: `wsc-positions-data → positions → year=... → month=... → day=...`
+
+You should see a `.parquet` file for each producer run.
+
+---
+
+### Step 7 — Re-run the producer (trigger a fresh scrape)
+
+The producer Job runs once on deploy and then completes. To scrape again:
+
 ```bash
-kubectl port-forward svc/wsc-pipeline-minio 9001:9001 &
-# Then visit http://localhost:9001 (minioadmin / minioadmin)
+kubectl delete job wsc-pipeline-producer
+make k8s-up
 ```
+
+This recreates the Job. The always-running consumer picks up the new Kafka message automatically.
+
+---
+
+### Kubernetes dashboard
+
+```bash
+make minikube-dashboard
+```
+
+Opens the Minikube dashboard in your browser — shows pod status, logs, resource usage, and job history all in one view.
+
+---
 
 ### Tear down
 
 ```bash
-# Remove the Helm release (keeps Minikube running)
+# Remove the Helm release (Minikube cluster keeps running)
 make k8s-down
 
 # Stop and delete the Minikube cluster entirely
@@ -278,4 +348,4 @@ All configuration via environment variables (see `.env.example`):
 - **Pydantic Settings** — typed configuration with validation, auto-loads from env vars
 - **Tenacity retries** — exponential backoff on scraping and S3 uploads for resilience
 - **Shared module** — `shared/` avoids code duplication between producer and consumer (HTML parsing, Parquet I/O, base config)
-- **KRaft Kafka on K8s** — no ZooKeeper sidecar needed, simpler cluster topology
+- **Consistent images across Docker and K8s** — Helm chart uses the same `confluentinc/cp-kafka`, `cp-zookeeper`, and `minio/minio` images as `docker-compose.yml`, avoiding registry or availability issues

@@ -9,6 +9,7 @@ from src.enrichment import (
     enrich_positions,
 )
 from src.models import BasePosition
+from src.url_cache import hash_requirements_block
 
 
 class TestClassifyCategory:
@@ -79,9 +80,10 @@ class TestEnrichPositions:
         result = enrich_positions([])
         assert result == []
 
+    @patch("src.enrichment.save_cache")
     @patch("src.enrichment.fetch_position_html", return_value=None)
-    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}})
-    def test_enriches_list_of_base_positions(self, _mock_cache, _mock_fetch):
+    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}, "positions_enrichment": {}})
+    def test_enriches_list_of_base_positions(self, _mock_cache, _mock_fetch, _mock_save):
         positions = [
             BasePosition(index=1, title="Senior Backend Engineer"),
             BasePosition(index=2, title="Junior UX Designer"),
@@ -94,9 +96,48 @@ class TestEnrichPositions:
         assert enriched[1].category == "Design"
         assert enriched[2].category == "Operations"
 
+    @patch("src.enrichment.save_cache")
     @patch("src.enrichment.fetch_position_html", return_value=None)
-    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}})
-    def test_complexity_scores_are_valid_range(self, _mock_cache, _mock_fetch):
+    @patch("src.enrichment.load_cache", return_value={"title_mapping": {}, "positions_enrichment": {}})
+    def test_complexity_scores_are_valid_range(self, _mock_cache, _mock_fetch, _mock_save):
         positions = [BasePosition(index=1, title="Backend Engineer")]
         enriched = enrich_positions(positions)
         assert 0 <= enriched[0].complexity_score <= 100
+
+    @patch("src.enrichment.save_cache")
+    @patch("src.enrichment.fetch_position_html")
+    @patch("src.enrichment.load_cache")
+    def test_enrichment_cache_hit_skips_recalculation(self, mock_load_cache, mock_fetch, mock_save):
+        """On a second call, the same requirements HTML must be served from cache
+        without re-fetching or re-computing."""
+        req_html = (
+            '<div class="career-text-block__wrp--data--requirements">'
+            "<ul><li>5+ years experience</li><li>Python</li></ul></div>"
+        )
+        req_hash = hash_requirements_block(req_html)
+        position_html = f"<html><body>{req_html}</body></html>"
+
+        cached_enrichment = {
+            "category": "Engineering",
+            "seniority_level": "Senior",
+            "years_of_experience": 5,
+            "skills_count": 2,
+            "complexity_score": 57,
+        }
+
+        mock_load_cache.return_value = {
+            "title_mapping": {"Backend Engineer": "https://example.com/career/1"},
+            "positions_enrichment": {req_hash: cached_enrichment},
+        }
+        mock_fetch.return_value = position_html
+
+        positions = [BasePosition(index=1, title="Backend Engineer")]
+        enriched = enrich_positions(positions)
+
+        assert len(enriched) == 1
+        assert enriched[0].category == "Engineering"
+        assert enriched[0].seniority_level == "Senior"
+        assert enriched[0].years_of_experience == 5
+        assert enriched[0].complexity_score == 57
+        mock_fetch.assert_called_once()  # page fetched once to get the HTML
+        mock_save.assert_called_once()   # cache flushed exactly once

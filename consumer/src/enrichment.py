@@ -7,7 +7,7 @@ from shared.logger import get_logger
 from src.config import settings
 from src.consts import CATEGORY_KEYWORDS, SENIORITY_KEYWORDS, SENIORITY_LEVEL_KEYWORDS
 from src.models import BasePosition, EnrichedPosition
-from src.url_cache import load_cache
+from src.url_cache import get_cached_enrichment, hash_requirements_block, load_cache, save_cache
 
 logger = get_logger(__name__)
 
@@ -93,13 +93,23 @@ def calculate_complexity_score(
     Seniority   20%: graduated — Junior 5, Mid 10, Senior 15, Lead 20
     """
     experience_score = min(years / 8, 1.0) * 40
-    skills_score = min(skills / 10, 1.0) * 40
+    skills_score = min(skills / 8, 1.0) * 40
     seniority_score = _SENIORITY_SCORES.get(seniority_level, 0)
     return round(experience_score + skills_score + seniority_score)
 
 
-def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> EnrichedPosition:
-    """Enrich a single BasePosition by scraping its detail page."""
+def _enrich_one(
+    position: BasePosition,
+    title_mapping: dict[str, str],
+    cache: dict,
+) -> EnrichedPosition:
+    """Enrich a single BasePosition by scraping its detail page.
+
+    Checks `cache["positions_enrichment"]` first; if the requirements block
+    HTML is unchanged (same hash), returns the cached result without
+    re-computing. New results are written into `cache` in memory so the
+    caller can do a single disk flush after all positions are processed.
+    """
     url = title_mapping.get(position.title)
 
     years = 0
@@ -114,6 +124,16 @@ def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> Enrich
                 "div.career-text-block__wrp--data--requirements"
             )
             if req_block:
+                req_block_html = str(req_block)
+                cached = get_cached_enrichment(req_block_html, cache)
+                if cached:
+                    logger.debug("Enrichment cache hit for: %s", position.title)
+                    return EnrichedPosition(
+                        index=position.index,
+                        title=position.title,
+                        **cached,
+                    )
+
                 years = parse_years_of_experience(req_block)
                 skills = parse_skills_count(req_block)
             else:
@@ -125,14 +145,22 @@ def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> Enrich
     seniority_level = classify_seniority_level(req_block, years)
     score = calculate_complexity_score(years, skills, seniority_level)
 
+    enrichment_fields = {
+        "category": category,
+        "seniority_level": seniority_level,
+        "years_of_experience": years,
+        "skills_count": skills,
+        "complexity_score": score,
+    }
+
+    if req_block is not None:
+        req_hash = hash_requirements_block(str(req_block))
+        cache.setdefault("positions_enrichment", {})[req_hash] = enrichment_fields
+
     return EnrichedPosition(
         index=position.index,
         title=position.title,
-        category=category,
-        seniority_level=seniority_level,
-        years_of_experience=years,
-        skills_count=skills,
-        complexity_score=score,
+        **enrichment_fields,
     )
 
 
@@ -142,10 +170,16 @@ def enrich_positions(positions: list[BasePosition]) -> list[EnrichedPosition]:
         logger.warning("Received empty positions list for enrichment")
         return []
 
-    cache = load_cache(settings.url_cache_path)
-    title_mapping: dict[str, str] = (cache or {}).get("title_mapping", {})
+    cache: dict = load_cache(settings.url_cache_path) or {
+        "page_hash": "",
+        "title_mapping": {},
+        "positions_enrichment": {},
+    }
+    title_mapping: dict[str, str] = cache.get("title_mapping", {})
 
     logger.info("Enriching %d positions", len(positions))
 
-    enriched = [_enrich_one(p, title_mapping) for p in positions]
+    enriched = [_enrich_one(p, title_mapping, cache) for p in positions]
+
+    save_cache(settings.url_cache_path, cache)
     return enriched

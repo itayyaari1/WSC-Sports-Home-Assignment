@@ -10,7 +10,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-CacheData = dict  # {"page_hash": str, "title_mapping": dict[str, str]}
+CacheData = dict  # {"page_hash": str, "title_mapping": dict[str, str], "positions_enrichment": dict[str, dict]}
 
 
 def _base_url(url: str) -> str:
@@ -72,17 +72,32 @@ def load_cache(path: str) -> CacheData | None:
         return None
 
 
-def save_cache(path: str, page_hash: str, title_mapping: dict[str, str]) -> None:
+def hash_requirements_block(req_block_html: str) -> str:
+    """Return a SHA-256 digest of a requirements block HTML string."""
+    return hashlib.sha256(req_block_html.encode()).hexdigest()
+
+
+def get_cached_enrichment(req_block_html: str, cache: CacheData) -> dict | None:
+    """Look up enrichment fields by requirements block HTML hash.
+
+    Returns the cached enrichment dict if found, or None on a miss.
+    """
+    req_hash = hash_requirements_block(req_block_html)
+    return (cache.get("positions_enrichment") or {}).get(req_hash)
+
+
+def save_cache(path: str, cache_data: CacheData) -> None:
     """Write the cache JSON to disk."""
     cache_path = Path(path)
-    data: CacheData = {
-        "page_hash": page_hash,
-        "title_mapping": title_mapping,
-    }
     try:
         with cache_path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        logger.info("Cache saved to %s (%d positions)", path, len(title_mapping))
+            json.dump(cache_data, f, indent=2, ensure_ascii=False)
+        logger.info(
+            "Cache saved to %s (%d positions, %d enrichments)",
+            path,
+            len(cache_data.get("title_mapping", {})),
+            len(cache_data.get("positions_enrichment", {})),
+        )
     except OSError as e:
         logger.error("Failed to write cache file %s: %s", path, e)
 
@@ -119,5 +134,10 @@ def check_and_refresh_cache(careers_url: str, cache_path: str) -> CacheData:
         logger.error("Failed to extract position URLs: %s", e)
         return cache or {"page_hash": "", "title_mapping": {}}
 
-    save_cache(cache_path, page_hash, title_mapping)
-    return {"page_hash": page_hash, "title_mapping": title_mapping}
+    new_cache: CacheData = {
+        "page_hash": page_hash,
+        "title_mapping": title_mapping,
+        "positions_enrichment": (cache or {}).get("positions_enrichment", {}),
+    }
+    save_cache(cache_path, new_cache)
+    return new_cache

@@ -11,6 +11,7 @@ COPY consumer/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY consumer/src/ ./src/
+COPY consumer/tests/ ./tests/
 COPY shared/ ./shared/
 
 ENV PYTHONPATH=/app

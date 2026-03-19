@@ -1,5 +1,8 @@
 import sys
+from datetime import datetime, timezone
+
 import pandas as pd
+
 from shared.logger import get_logger
 from src.config import settings
 from src.enrichment import enrich_positions
@@ -21,7 +24,19 @@ def _df_to_positions(df: pd.DataFrame) -> list[BasePosition]:
 
 def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
     """Convert a list of EnrichedPosition models back to a DataFrame for storage."""
-    return pd.DataFrame([e.model_dump() for e in enriched])
+    now = datetime.now(timezone.utc)
+    rows = [
+        {
+            "Index": e.index,
+            "Position_Title": e.title,
+            "category": e.category,
+            "seniority_level": e.seniority_level,
+            "complexity_score": e.complexity_score,
+            "enriched_at": now,
+        }
+        for e in enriched
+    ]
+    return pd.DataFrame(rows)
 
 
 def run():

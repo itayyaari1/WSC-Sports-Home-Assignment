@@ -123,6 +123,18 @@ make run-producer
 
 ## Running Tests
 
+### In Docker (recommended)
+
+Builds the images and runs both test suites inside isolated containers. No Kafka or MinIO infrastructure required — all external dependencies are mocked.
+
+```bash
+make test-docker
+```
+
+### On the host
+
+Requires Python 3.11+ and the service dependencies installed locally.
+
 ```bash
 make test
 ```

@@ -1,4 +1,4 @@
-.PHONY: build up down logs test lint clean local-install local-infra run-producer run-consumer
+.PHONY: build up down logs test test-docker lint clean local-install local-infra run-producer run-consumer
 
 build:
 	docker compose build
@@ -16,6 +16,10 @@ logs:
 test:
 	cd producer && pip3 install -r requirements.txt -q && PYTHONPATH=$(PWD) python3 -m pytest tests/ -v
 	cd consumer && pip3 install -r requirements.txt -q && PYTHONPATH=$(PWD) python3 -m pytest tests/ -v
+
+test-docker: build
+	docker compose run --rm --no-deps producer python -m pytest tests/ -v
+	docker compose run --rm --no-deps consumer python -m pytest tests/ -v
 
 local-install:
 	ln -sf $(PWD)/.env producer/.env

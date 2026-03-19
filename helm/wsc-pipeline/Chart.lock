@@ -1,0 +1,9 @@
+dependencies:
+- name: kafka
+  repository: https://charts.bitnami.com/bitnami
+  version: 26.11.4
+- name: minio
+  repository: https://charts.bitnami.com/bitnami
+  version: 12.13.2
+digest: sha256:98cf43c1ba101824af54c6c9f9c20c71bc5c980db96aca5b217a1f3ff043c163
+generated: "2026-03-19T23:09:38.263733+02:00"

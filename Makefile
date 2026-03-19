@@ -1,4 +1,5 @@
-.PHONY: build up down logs test test-docker lint clean local-install local-infra run-producer run-consumer
+.PHONY: build up down logs test test-docker lint clean local-install local-infra run-producer run-consumer \
+        minikube-start minikube-build minikube-dashboard helm-deps k8s-up k8s-down k8s-status k8s-logs-producer k8s-logs-consumer
 
 build:
 	docker compose build
@@ -42,15 +43,49 @@ lint:
 clean:
 	docker compose down -v --rmi local
 
-# Phase 2 - Infrastructure
-infra-init:
-	terraform -chdir=terraform init
 
-infra-plan:
-	terraform -chdir=terraform plan -var-file=environments/dev.tfvars
 
-infra-apply:
-	terraform -chdir=terraform apply -var-file=environments/dev.tfvars
+# ---------------------------------------------------------------------------
+# Phase 2 - Kubernetes (Minikube)
+# Prerequisites: minikube, helm, kubectl
+# ---------------------------------------------------------------------------
 
-infra-destroy:
-	terraform -chdir=terraform destroy -var-file=environments/dev.tfvars
+# Start Minikube with enough resources for Kafka + MinIO
+minikube-start:
+	minikube start --cpus=4 --memory=6144
+
+# Open the Minikube Kubernetes dashboard in the default browser
+minikube-dashboard:
+	minikube dashboard
+
+# Build producer & consumer images directly inside Minikube's Docker daemon.
+# imagePullPolicy: Never in the Helm chart means Kubernetes uses these local images.
+minikube-build:
+	eval $$(minikube docker-env) && \
+	docker build -t wsc-producer -f producer/Dockerfile . && \
+	docker build -t wsc-consumer -f consumer/Dockerfile .
+
+# No sub-chart dependencies — infra runs via plain templates using Docker Hub images.
+helm-deps:
+	@echo "No sub-chart dependencies to resolve."
+
+# Deploy (or upgrade) the full pipeline into the current kubectl context
+k8s-up: helm-deps
+	helm upgrade --install wsc-pipeline helm/wsc-pipeline/ \
+		--wait --timeout=10m
+
+# Tear down the release (keeps the Minikube cluster running)
+k8s-down:
+	helm uninstall wsc-pipeline
+
+# Quick overview of all pipeline pods, jobs, and deployments
+k8s-status:
+	kubectl get pods,jobs,deployments -l app.kubernetes.io/instance=wsc-pipeline
+
+# Tail logs from the producer Job (one-shot, reads all containers)
+k8s-logs-producer:
+	kubectl logs job/wsc-pipeline-producer --all-containers --tail=200
+
+# Stream logs from the consumer Deployment
+k8s-logs-consumer:
+	kubectl logs deployment/wsc-pipeline-consumer -f

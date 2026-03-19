@@ -1,0 +1,10 @@
+apiVersion: v2
+name: wsc-pipeline
+description: WSC Sports position pipeline (Kafka + MinIO + Producer + Consumer)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+# No sub-chart dependencies — Kafka, ZooKeeper, and MinIO are deployed via
+# plain K8s manifests in templates/ using the same Docker Hub images as
+# docker-compose.yml (confluentinc/cp-kafka, confluentinc/cp-zookeeper, minio/minio).

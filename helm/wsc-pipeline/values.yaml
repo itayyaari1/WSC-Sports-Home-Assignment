@@ -1,0 +1,40 @@
+# Producer — runs as a one-shot Kubernetes Job
+producer:
+  image:
+    repository: wsc-producer
+    tag: latest
+    pullPolicy: Never
+  backoffLimit: 3
+  env:
+    careersUrl: "https://wsc-sports.com/Careers"
+    scrapeTimeoutSeconds: "30"
+    scrapeRetries: "3"
+
+# Consumer — runs as a long-lived Deployment
+consumer:
+  image:
+    repository: wsc-consumer
+    tag: latest
+    pullPolicy: Never
+  replicaCount: 1
+
+# Shared pipeline config (Kafka topic, S3 bucket, etc.)
+config:
+  kafkaTopic: wsc-positions
+  kafkaGroupId: wsc-consumer-group
+  kafkaAutoOffsetReset: earliest
+  s3Bucket: wsc-positions-data
+  awsRegion: us-east-1
+
+# Infrastructure images — same as docker-compose.yml, all on Docker Hub
+zookeeper:
+  image: "confluentinc/cp-zookeeper:7.5.0"
+
+kafka:
+  image: "confluentinc/cp-kafka:7.5.0"
+
+minio:
+  image: "minio/minio:latest"
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin

@@ -1,10 +1,8 @@
-import io
-
 import pandas as pd
-import pyarrow.parquet as pq
 from confluent_kafka import Consumer, KafkaError
 
 from shared.logger import get_logger
+from shared.parquet_io import read_parquet_bytes
 from src.config import settings
 
 logger = get_logger(__name__)
@@ -27,13 +25,6 @@ def create_consumer() -> Consumer:
         settings.kafka_group_id,
     )
     return consumer
-
-
-def deserialize_parquet(data: bytes) -> pd.DataFrame:
-    """Deserialize parquet bytes into a pandas DataFrame."""
-    buffer = io.BytesIO(data)
-    table = pq.read_table(buffer)
-    return table.to_pandas()
 
 
 def poll_message(consumer: Consumer) -> pd.DataFrame | None:
@@ -62,7 +53,7 @@ def poll_message(consumer: Consumer) -> pd.DataFrame | None:
         {k: v.decode() if isinstance(v, bytes) else v for k, v in headers.items()},
     )
 
-    df = deserialize_parquet(msg.value())
+    df = read_parquet_bytes(msg.value())
     logger.info("Deserialized parquet with %d rows", len(df))
     return df
 

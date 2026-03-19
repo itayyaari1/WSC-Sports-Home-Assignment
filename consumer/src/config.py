@@ -1,12 +1,7 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from shared.config import SharedBaseSettings
 
 
-class ConsumerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    kafka_bootstrap_servers: str = "localhost:9092"
-    kafka_topic: str = "wsc-positions"
-    kafka_security_protocol: str = "PLAINTEXT"
+class ConsumerSettings(SharedBaseSettings):
     kafka_group_id: str = "wsc-consumer-group"
     kafka_auto_offset_reset: str = "earliest"
     kafka_poll_timeout: float = 10.0
@@ -17,7 +12,6 @@ class ConsumerSettings(BaseSettings):
     aws_access_key_id: str = "test"
     aws_secret_access_key: str = "test"
 
-    careers_url: str = "https://wsc-sports.com/Careers"
     url_cache_path: str = "url_cache.json"
 
 

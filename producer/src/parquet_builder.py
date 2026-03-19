@@ -1,9 +1,7 @@
-import io
-
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from shared.logger import get_logger
+from shared.parquet_io import write_parquet_bytes
 
 logger = get_logger(__name__)
 
@@ -29,9 +27,7 @@ class ParquetBuilder:
             schema=self.SCHEMA,
         )
 
-        buffer = io.BytesIO()
-        pq.write_table(table, buffer, compression="snappy")
-        parquet_bytes = buffer.getvalue()
+        parquet_bytes = write_parquet_bytes(table)
 
         logger.info(
             "Built parquet file: %d positions, %d bytes",

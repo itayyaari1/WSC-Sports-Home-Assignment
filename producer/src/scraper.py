@@ -1,9 +1,7 @@
-import unicodedata
-
 import requests
-from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from shared.careers_html import normalize_title, strip_view_position_suffix, extract_title_from_link, fetch_careers_page
 from shared.logger import get_logger
 from src.config import settings
 
@@ -12,23 +10,6 @@ logger = get_logger(__name__)
 
 class ScraperError(Exception):
     """Raised when scraping fails after all retries."""
-
-
-def normalize_title(title: str) -> str:
-    """Strip whitespace and normalize unicode characters."""
-    title = title.strip()
-    title = unicodedata.normalize("NFKD", title)
-    title = " ".join(title.split())
-    return title
-
-
-def strip_view_position_suffix(text: str) -> str:
-    """Remove trailing CTA text while preserving the original title."""
-    cta_suffix = "view position"
-    normalized = normalize_title(text)
-    if normalized.lower().endswith(cta_suffix):
-        normalized = normalized[: -len(cta_suffix)].rstrip()
-    return normalized
 
 
 class PositionScraper:
@@ -50,9 +31,7 @@ class PositionScraper:
             ),
         )
         def _fetch() -> str:
-            response = requests.get(self.url, timeout=self.timeout)
-            response.raise_for_status()
-            return response.text
+            return fetch_careers_page(self.url, timeout=self.timeout)
 
         return _fetch
 
@@ -60,24 +39,16 @@ class PositionScraper:
         """Fetch the careers page HTML content with retry logic."""
         return self._make_fetch()()
 
-    def _extract_title_from_link(self, link) -> str:
-        """Extract title from structured span first, then fallback to link text."""
-        title_span = link.select_one("span.link-text")
-        if title_span:
-            return normalize_title(title_span.get_text(" ", strip=True))
-
-        link_text = normalize_title(link.get_text(" ", strip=True))
-        return strip_view_position_suffix(link_text)
-
     def _parse_positions(self, html: str) -> list[str]:
         """Extract position titles from the careers page HTML."""
-        soup = BeautifulSoup(html, "html.parser")
+        from bs4 import BeautifulSoup
 
+        soup = BeautifulSoup(html, "html.parser")
         positions = []
 
         career_links = soup.find_all("a", href=lambda h: h and "/career/" in h.lower())
         for link in career_links:
-            title = self._extract_title_from_link(link)
+            title = extract_title_from_link(link)
             if title and title.lower() != "view position":
                 positions.append(title)
 
@@ -86,7 +57,7 @@ class PositionScraper:
             for li in soup.find_all("li"):
                 link = li.find("a")
                 if link and link.get("href", ""):
-                    title = self._extract_title_from_link(link)
+                    title = extract_title_from_link(link)
                     if title and title.lower() != "view position":
                         positions.append(title)
 

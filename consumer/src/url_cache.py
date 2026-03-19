@@ -1,24 +1,16 @@
 import hashlib
 import json
-import unicodedata
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
 
+from shared.careers_html import extract_title_from_link, fetch_careers_page
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 CacheData = dict  # {"page_hash": str, "title_mapping": dict[str, str]}
-
-
-def _normalize_title(title: str) -> str:
-    """Strip whitespace and normalize unicode characters."""
-    title = title.strip()
-    title = unicodedata.normalize("NFKD", title)
-    return " ".join(title.split())
 
 
 def _base_url(url: str) -> str:
@@ -42,14 +34,6 @@ def _compute_jobs_section_hash(html: str) -> str:
     return hashlib.sha256(str(jobs_div).encode()).hexdigest()
 
 
-def fetch_careers_page(url: str) -> str:
-    """GET the careers page and return the HTML."""
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    logger.debug("Fetched careers page.")
-    return response.text
-
-
 def extract_position_urls(html: str, careers_url: str) -> dict[str, str]:
     """Parse HTML and return {title: absolute_url} for all career positions."""
     soup = BeautifulSoup(html, "html.parser")
@@ -59,16 +43,7 @@ def extract_position_urls(html: str, careers_url: str) -> dict[str, str]:
 
     career_links = soup.find_all("a", href=lambda h: h and "/career/" in h.lower())
     for link in career_links:
-        title_span = link.select_one("span.link-text")
-        if title_span:
-            raw_title = title_span.get_text(" ", strip=True)
-        else:
-            raw_title = link.get_text(" ", strip=True)
-
-        title = _normalize_title(raw_title)
-        cta = "view position"
-        if title.lower().endswith(cta):
-            title = title[: -len(cta)].rstrip()
+        title = extract_title_from_link(link)
 
         if not title or title.lower() == "view position":
             continue

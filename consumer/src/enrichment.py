@@ -78,20 +78,23 @@ def classify_seniority_level(req_block: BeautifulSoup | None, years: int) -> str
     return "Mid"
 
 
+_SENIORITY_SCORES = {"Junior": 5, "Mid": 10, "Senior": 15, "Lead": 20}
+
+
 def calculate_complexity_score(
     years: int,
     skills: int,
-    has_seniority: bool,
+    seniority_level: str,
 ) -> int:
     """Calculate a 0-100 complexity score from three weighted factors.
 
     Experience  40%: years mapped to 0-8+ scale
     Skills      40%: li count mapped to 0-10+ scale
-    Seniority   20%: binary — keyword present or not
+    Seniority   20%: graduated — Junior 5, Mid 10, Senior 15, Lead 20
     """
     experience_score = min(years / 8, 1.0) * 40
     skills_score = min(skills / 10, 1.0) * 40
-    seniority_score = 20 if has_seniority else 0
+    seniority_score = _SENIORITY_SCORES.get(seniority_level, 0)
     return round(experience_score + skills_score + seniority_score)
 
 
@@ -101,7 +104,6 @@ def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> Enrich
 
     years = 0
     skills = 0
-    has_seniority = False
     req_block = None
 
     if url:
@@ -116,13 +118,12 @@ def _enrich_one(position: BasePosition, title_mapping: dict[str, str]) -> Enrich
                 skills = parse_skills_count(req_block)
             else:
                 logger.debug("No requirements block found for: %s", position.title)
-            has_seniority = detect_seniority_keyword(soup)
     else:
         logger.warning("No URL found for position: %s", position.title)
 
     category = classify_category(position.title)
     seniority_level = classify_seniority_level(req_block, years)
-    score = calculate_complexity_score(years, skills, has_seniority)
+    score = calculate_complexity_score(years, skills, seniority_level)
 
     return EnrichedPosition(
         index=position.index,

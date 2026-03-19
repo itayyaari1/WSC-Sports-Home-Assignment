@@ -23,22 +23,29 @@ WSC Careers Page → Producer (scrape + parquet) → Kafka → Consumer (enrich 
 ## Project Structure
 
 ```
+shared/                      # Code shared by both producer and consumer
+├── logger.py              # Shared logging setup (get_logger)
+├── config.py              # SharedBaseSettings (Kafka + careers_url fields)
+├── careers_html.py        # Careers page fetch + HTML parsing utilities
+└── parquet_io.py          # In-memory Parquet read/write helpers
+
 producer/                    # Scrapes positions, builds parquet, publishes to Kafka
 ├── src/
 │   ├── main.py            # Entry point & orchestration
-│   ├── scraper.py         # Web scraping with retry logic
-│   ├── parquet_builder.py # DataFrame → Parquet serialization
+│   ├── scraper.py         # Web scraping with retry logic (uses shared.careers_html)
+│   ├── parquet_builder.py # DataFrame → Parquet serialization (uses shared.parquet_io)
 │   ├── kafka_producer.py  # Kafka message publishing
-│   └── config.py          # Pydantic settings from env vars
+│   └── config.py          # ProducerSettings extends SharedBaseSettings
 └── tests/
 
 consumer/                    # Consumes from Kafka, enriches data, uploads to S3
 ├── src/
 │   ├── main.py            # Entry point & consumer loop
-│   ├── kafka_consumer.py  # Kafka message consumption
+│   ├── kafka_consumer.py  # Kafka message consumption (uses shared.parquet_io)
 │   ├── enrichment.py      # Category, seniority & complexity scoring
-│   ├── storage.py         # S3 upload with retry logic
-│   └── config.py          # Pydantic settings from env vars
+│   ├── storage.py         # S3 upload with retry logic (uses shared.parquet_io)
+│   ├── url_cache.py       # Careers page URL cache (uses shared.careers_html)
+│   └── config.py          # ConsumerSettings extends SharedBaseSettings
 └── tests/
 
 docker-compose.yml          # Zookeeper, Kafka, LocalStack, Producer, Consumer services
@@ -167,7 +174,8 @@ Services use healthchecks to wait for dependencies. Run `make up` to start all i
 
 ## Common Development Patterns
 
-- **Pydantic for config**: Both producer and consumer use `config.py` with Pydantic `BaseSettings` to load and validate env vars
+- **Shared modules**: Common code lives in `shared/` and is imported by both services; avoids duplication of HTML parsing, Parquet I/O, and base config
+- **Pydantic for config**: `ProducerSettings` and `ConsumerSettings` both extend `SharedBaseSettings` from `shared/config.py`; service-specific fields are added in each service's `config.py`
 - **Retry logic**: Scraper and storage both use `tenacity` for exponential backoff
 - **Kafka offset commit**: Consumer only commits after successful upload to ensure at-least-once delivery
-- **In-memory Parquet**: No temporary files — serialize/deserialize in memory for simplicity and portability
+- **In-memory Parquet**: No temporary files — serialize/deserialize via `shared.parquet_io` helpers in memory for simplicity and portability

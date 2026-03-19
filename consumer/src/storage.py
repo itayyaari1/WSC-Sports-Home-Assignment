@@ -1,14 +1,13 @@
-import io
 from datetime import datetime, timezone
 
 import boto3
 import pandas as pd
 import pyarrow as pa
-import pyarrow.parquet as pq
 from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from shared.logger import get_logger
+from shared.parquet_io import write_parquet_bytes
 from src.config import settings
 
 logger = get_logger(__name__)
@@ -49,9 +48,7 @@ def generate_s3_key() -> str:
 def df_to_parquet_bytes(df: pd.DataFrame) -> bytes:
     """Serialize enriched DataFrame to parquet bytes."""
     table = pa.Table.from_pandas(df, schema=ENRICHED_SCHEMA, preserve_index=False)
-    buffer = io.BytesIO()
-    pq.write_table(table, buffer, compression="snappy")
-    return buffer.getvalue()
+    return write_parquet_bytes(table)
 
 
 @retry(

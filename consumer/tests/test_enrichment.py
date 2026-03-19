@@ -51,26 +51,26 @@ class TestClassifySeniorityLevel:
 
 class TestCalculateComplexityScore:
     def test_senior_engineering_scores_high(self):
-        # 5 years + 8 skills + seniority keyword → high score
-        score = calculate_complexity_score(years=5, skills=8, has_seniority=True)
+        # 5 years + 8 skills + Senior → 25 + 32 + 15 = 72
+        score = calculate_complexity_score(years=5, skills=8, seniority_level="Senior")
         assert 60 <= score <= 100
 
     def test_junior_operations_scores_low(self):
-        # 1 year + 3 skills + no seniority keyword → low score
-        score = calculate_complexity_score(years=1, skills=3, has_seniority=False)
+        # 1 year + 3 skills + Junior → 5 + 12 + 5 = 22
+        score = calculate_complexity_score(years=1, skills=3, seniority_level="Junior")
         assert 0 <= score <= 45
 
     def test_lead_architect_scores_highest(self):
-        # 8+ years + 10+ skills + seniority keyword → maximum
-        score = calculate_complexity_score(years=8, skills=10, has_seniority=True)
+        # 8+ years + 10+ skills + Lead → 40 + 40 + 20 = 100
+        score = calculate_complexity_score(years=8, skills=10, seniority_level="Lead")
         assert score == 100
 
     def test_score_capped_at_100(self):
-        score = calculate_complexity_score(years=999, skills=999, has_seniority=True)
+        score = calculate_complexity_score(years=999, skills=999, seniority_level="Lead")
         assert score <= 100
 
     def test_score_minimum_is_non_negative(self):
-        score = calculate_complexity_score(years=0, skills=0, has_seniority=False)
+        score = calculate_complexity_score(years=0, skills=0, seniority_level="Junior")
         assert score >= 0
 
 

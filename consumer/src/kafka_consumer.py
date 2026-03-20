@@ -56,10 +56,17 @@ class KafkaConsumer:
             msg.topic(),
             msg.partition(),
             msg.offset(),
-            {k: v.decode() if isinstance(v, bytes) else v for k, v in headers.items()},
+            {k: v.decode("utf-8", errors="replace") if isinstance(v, bytes) else v for k, v in headers.items()},
         )
 
         raw_bytes = msg.value()
+
+        # Guard against tombstone messages (null value)
+        if raw_bytes is None:
+            logger.warning("Received tombstone message (null value), skipping")
+            self.commit_offset()
+            return None
+
         try:
             df = read_parquet_bytes(raw_bytes)
         except Exception as exc:

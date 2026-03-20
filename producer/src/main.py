@@ -11,7 +11,12 @@ def run():
     logger.info("Starting WSC Sports position producer")
 
     # Step 1: Scrape positions
-    scraper = make_scraper()
+    try:
+        scraper = make_scraper()
+    except Exception as e:
+        logger.error("Failed to initialize scraper: %s", e)
+        sys.exit(1)
+
     try:
         positions = scraper.scrape()
     except ScraperError as e:
@@ -19,7 +24,12 @@ def run():
         sys.exit(1)
 
     # Step 2: Build parquet
-    builder = ParquetBuilder()
+    try:
+        builder = ParquetBuilder()
+    except Exception as e:
+        logger.error("Failed to initialize parquet builder: %s", e)
+        sys.exit(1)
+
     try:
         parquet_bytes = builder.build(positions)
     except ValueError as e:
@@ -27,7 +37,12 @@ def run():
         sys.exit(1)
 
     # Step 3: Publish to Kafka
-    producer = PositionProducer()
+    try:
+        producer = PositionProducer()
+    except Exception as e:
+        logger.error("Failed to initialize Kafka producer: %s", e)
+        sys.exit(1)
+
     try:
         producer.publish(parquet_bytes, record_count=len(positions))
     except Exception as e:

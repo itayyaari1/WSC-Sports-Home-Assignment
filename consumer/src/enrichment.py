@@ -113,8 +113,12 @@ def _enrich_one(
                     **cached,
                 )
 
-            years = parse_years_of_experience(req_block)
-            skills = parse_skills_count(req_block)
+            try:
+                years = parse_years_of_experience(req_block)
+                skills = parse_skills_count(req_block)
+            except Exception as e:
+                logger.warning("Failed to parse requirements block for '%s': %s", position.title, e)
+                years, skills = 0, 0
         else:
             logger.debug("No requirements block found for: %s", position.title)
     else:

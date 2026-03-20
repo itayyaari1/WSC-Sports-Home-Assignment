@@ -42,6 +42,7 @@ def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
 def run():
     """Main consumer loop: consume -> enrich -> upload -> commit."""
     logger.info("Starting WSC Sports position consumer")
+
     dlq = DlqProducer()
     consumer = KafkaConsumer(dlq_producer=dlq)
     uploader = S3Uploader()
@@ -56,15 +57,29 @@ def run():
             df, raw_bytes = result
 
             # Convert DataFrame rows to Position models
-            positions = _df_to_positions(df)
+            try:
+                positions = _df_to_positions(df)
+            except Exception as e:
+                logger.error("Schema conversion failed, forwarding to DLQ: %s", e)
+                try:
+                    dlq.publish(raw_bytes, f"schema error: {e}", settings.kafka_topic)
+                except Exception as dlq_exc:
+                    logger.error("DLQ publish also failed: %s", dlq_exc)
+                finally:
+                    consumer.commit_offset()
+                continue
 
             # Enrich
             try:
                 enriched = enrich_positions(positions)
             except Exception as e:
                 logger.error("Enrichment failed, forwarding to DLQ: %s", e)
-                dlq.publish(raw_bytes, f"enrichment error: {e}", settings.kafka_topic)
-                consumer.commit_offset()
+                try:
+                    dlq.publish(raw_bytes, f"enrichment error: {e}", settings.kafka_topic)
+                except Exception as dlq_exc:
+                    logger.error("DLQ publish also failed: %s", dlq_exc)
+                finally:
+                    consumer.commit_offset()
                 continue
 
             # Convert enriched models back to DataFrame for storage
@@ -76,8 +91,12 @@ def run():
                 logger.info("Successfully processed and uploaded to %s", s3_key)
             except Exception as e:
                 logger.error("S3 upload failed after retries, forwarding to DLQ: %s", e)
-                dlq.publish(raw_bytes, f"s3 upload error: {e}", settings.kafka_topic)
-                consumer.commit_offset()
+                try:
+                    dlq.publish(raw_bytes, f"s3 upload error: {e}", settings.kafka_topic)
+                except Exception as dlq_exc:
+                    logger.error("DLQ publish also failed: %s", dlq_exc)
+                finally:
+                    consumer.commit_offset()
                 continue
 
             # Commit offset only after successful upload
@@ -88,9 +107,13 @@ def run():
         sys.exit(1)
     finally:
         logger.info("Closing consumer")
+        try:
+            # Flush any in-flight DLQ messages
+            dlq._producer.flush(timeout=30)
+        except Exception as e:
+            logger.error("Failed to flush DLQ messages: %s", e)
         consumer.close()
-
-    logger.info("Consumer shut down cleanly")
+        logger.info("Consumer shut down cleanly")
 
 
 if __name__ == "__main__":

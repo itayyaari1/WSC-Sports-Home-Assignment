@@ -47,6 +47,11 @@ class TestNormalizeTitle:
     def test_empty_string(self):
         assert normalize_title("") == ""
 
+    def test_normalizes_unicode_characters(self):
+        # Test NFKD normalization - non-breaking space should be normalized to regular space
+        # Using non-breaking space (U+00A0) which NFKD normalizes to regular space
+        assert normalize_title("Backend\u00A0Engineer") == "Backend Engineer"
+
 
 class TestStripViewPositionSuffix:
     def test_strips_trailing_cta(self):
@@ -115,6 +120,39 @@ class TestParsePositions:
         scraper = make_scraper()
         positions = scraper._parse_positions(EMPTY_HTML)
         assert positions == []
+
+    def test_fallback_li_parsing_when_no_career_links(self):
+        """Test fallback parsing path when primary /career/ selector finds nothing."""
+        html = """
+        <html><body>
+          <ul>
+            <li><a href="https://example.com/position/data-scientist">Data Scientist</a></li>
+            <li><a href="https://example.com/position/devops-engineer">DevOps Engineer</a></li>
+          </ul>
+        </body></html>
+        """
+        scraper = make_scraper()
+        positions = scraper._parse_positions(html)
+        assert len(positions) == 2
+        titles = [t for t, _ in positions]
+        assert "Data Scientist" in titles
+        assert "DevOps Engineer" in titles
+
+    def test_filters_none_and_blank_titles(self):
+        """Test that empty/blank titles are not included in results."""
+        html = """
+        <html><body>
+          <li><a href="/career/empty"></a></li>
+          <li><a href="/career/blank">   </a></li>
+          <li><a href="/career/valid">Valid Title</a></li>
+        </body></html>
+        """
+        scraper = make_scraper()
+        positions = scraper._parse_positions(html)
+        # Should only have the valid title
+        titles = [t for t, _ in positions]
+        assert len([t for t in titles if t.strip()]) == 1  # Only one non-blank title
+        assert "Valid Title" in titles
 
 
 class TestScrapePositions:

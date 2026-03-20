@@ -45,6 +45,7 @@ class TestDlqProducer:
     @patch("src.dlq_producer.Producer")
     def test_produces_to_dlq_topic(self, MockProducer):
         mock_producer = MagicMock()
+        mock_producer.flush.return_value = 0  # All messages flushed
         MockProducer.return_value = mock_producer
 
         from src.dlq_producer import DlqProducer
@@ -59,6 +60,7 @@ class TestDlqProducer:
     @patch("src.dlq_producer.Producer")
     def test_headers_contain_error_reason(self, MockProducer):
         mock_producer = MagicMock()
+        mock_producer.flush.return_value = 0  # All messages flushed
         MockProducer.return_value = mock_producer
 
         from src.dlq_producer import DlqProducer
@@ -73,6 +75,7 @@ class TestDlqProducer:
     @patch("src.dlq_producer.Producer")
     def test_flush_is_called(self, MockProducer):
         mock_producer = MagicMock()
+        mock_producer.flush.return_value = 0  # All messages flushed
         MockProducer.return_value = mock_producer
 
         from src.dlq_producer import DlqProducer
@@ -84,6 +87,7 @@ class TestDlqProducer:
     @patch("src.dlq_producer.Producer")
     def test_producer_created_once_per_instance(self, MockProducer):
         mock_producer = MagicMock()
+        mock_producer.flush.return_value = 0  # All messages flushed
         MockProducer.return_value = mock_producer
 
         from src.dlq_producer import DlqProducer
@@ -94,6 +98,49 @@ class TestDlqProducer:
         # Producer() constructor called only once in __init__ despite two publishes
         assert MockProducer.call_count == 1
         assert mock_producer.produce.call_count == 2
+
+    @patch("src.dlq_producer.Producer")
+    def test_publish_raises_when_produce_fails(self, MockProducer):
+        """Test that KafkaException from produce() is re-raised by publish()."""
+        from confluent_kafka import KafkaException
+        mock_producer = MagicMock()
+        MockProducer.return_value = mock_producer
+        mock_producer.produce.side_effect = KafkaException("broker unavailable")
+
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+
+        with pytest.raises(KafkaException):
+            dlq.publish(b"raw", "test error", "topic")
+
+    @patch("src.dlq_producer.Producer")
+    def test_publish_raises_on_flush_timeout(self, MockProducer):
+        """Test that flush timeout raises RuntimeError."""
+        mock_producer = MagicMock()
+        MockProducer.return_value = mock_producer
+        mock_producer.flush.return_value = 5  # 5 messages still undelivered
+
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+
+        with pytest.raises(RuntimeError, match="flush timed out"):
+            dlq.publish(b"raw", "test error", "topic")
+
+    @patch("src.dlq_producer.Producer")
+    def test_publish_handles_none_raw_bytes(self, MockProducer):
+        """Test that None raw_bytes is converted to empty bytes."""
+        mock_producer = MagicMock()
+        MockProducer.return_value = mock_producer
+        mock_producer.flush.return_value = 0
+
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+
+        dlq.publish(None, "test error", "topic")
+
+        # Should have called produce with b"" instead of None
+        call_kwargs = mock_producer.produce.call_args[1]
+        assert call_kwargs["value"] == b""
 
 
 # ---------------------------------------------------------------------------
@@ -257,4 +304,29 @@ class TestMainDlqPaths:
             run()
 
         MockDlq.return_value.publish.assert_not_called()
+        mock_consumer.commit_offset.assert_called()
+
+    @patch("src.main.S3Uploader")
+    @patch("src.main.KafkaConsumer")
+    @patch("src.main.DlqProducer")
+    def test_schema_error_routes_to_dlq(self, MockDlq, MockConsumer, _MockUploader):
+        """Test that schema drift (missing columns) routes to DLQ."""
+        # Create a DataFrame with missing Position_URL column
+        bad_df = pd.DataFrame({
+            "Index": pd.array([1], dtype="int32"),
+            "Position_Title": ["Backend Engineer"],
+            # Missing Position_URL intentionally
+        })
+        mock_dlq = MockDlq.return_value
+        mock_consumer = MockConsumer.return_value
+        raw = _make_parquet_bytes()
+        mock_consumer.poll.side_effect = [(bad_df, raw), KeyboardInterrupt]
+
+        from src.main import run
+        with pytest.raises((KeyboardInterrupt, SystemExit)):
+            run()
+
+        mock_dlq.publish.assert_called_once()
+        reason = mock_dlq.publish.call_args[0][1]
+        assert "schema error" in reason
         mock_consumer.commit_offset.assert_called()

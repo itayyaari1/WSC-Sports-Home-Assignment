@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from confluent_kafka import Producer
+from confluent_kafka import KafkaException, Producer
 
 from shared.logger import get_logger
 from src.config import settings
@@ -18,10 +18,12 @@ class DlqProducer:
                 "security.protocol": settings.kafka_security_protocol,
             }
         )
+        self._delivery_failed = False
         logger.info("DLQ producer created, target topic '%s'", settings.dlq_topic)
 
     def _delivery_report(self, err, msg) -> None:
         if err:
+            self._delivery_failed = True
             logger.error(
                 "DLQ delivery failed for topic=%s partition=%d: %s",
                 msg.topic(),
@@ -44,18 +46,37 @@ class DlqProducer:
             original-topic  – the Kafka topic the message was originally consumed from
             failed-at       – UTC ISO-8601 timestamp of the failure
         """
+        # Guard against None bytes (tombstone message)
+        if raw_bytes is None:
+            raw_bytes = b""
+
         headers = [
             ("error-reason", error_reason.encode()),
             ("original-topic", original_topic.encode()),
             ("failed-at", datetime.now(timezone.utc).isoformat().encode()),
         ]
-        self._producer.produce(
-            topic=settings.dlq_topic,
-            value=raw_bytes,
-            headers=headers,
-            on_delivery=self._delivery_report,
-        )
-        self._producer.flush()
+
+        try:
+            self._producer.produce(
+                topic=settings.dlq_topic,
+                value=raw_bytes,
+                headers=headers,
+                on_delivery=self._delivery_report,
+            )
+        except (KafkaException, BufferError) as e:
+            logger.error("DLQ produce() failed: %s", e)
+            raise
+
+        # Reset delivery flag for this publish attempt
+        self._delivery_failed = False
+        unflushed = self._producer.flush(timeout=30)
+
+        if unflushed > 0:
+            raise RuntimeError(f"DLQ flush timed out with {unflushed} messages undelivered")
+
+        if self._delivery_failed:
+            raise RuntimeError("DLQ message delivery failed (callback reported error)")
+
         logger.warning(
             "Message forwarded to DLQ topic '%s': %s",
             settings.dlq_topic,

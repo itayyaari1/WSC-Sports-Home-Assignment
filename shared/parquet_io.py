@@ -14,6 +14,10 @@ def write_parquet_bytes(table: pa.Table) -> bytes:
 
 def read_parquet_bytes(data: bytes) -> pd.DataFrame:
     """Deserialize Parquet bytes into a pandas DataFrame."""
+    if data is None:
+        raise ValueError("read_parquet_bytes received None; expected bytes")
+    if len(data) == 0:
+        raise ValueError("read_parquet_bytes received empty bytes; cannot deserialize")
     buffer = io.BytesIO(data)
     table = pq.read_table(buffer)
     return table.to_pandas()

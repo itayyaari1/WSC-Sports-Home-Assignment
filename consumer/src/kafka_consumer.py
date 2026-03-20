@@ -7,6 +7,11 @@ from src.config import settings
 
 logger = get_logger(__name__)
 
+# Imported lazily here to avoid a circular import; dlq_producer depends on config only.
+def _send_to_dlq(raw_bytes: bytes, reason: str, topic: str) -> None:
+    from src.dlq_producer import publish_to_dlq  # noqa: PLC0415
+    publish_to_dlq(raw_bytes, reason, topic)
+
 
 def create_consumer() -> Consumer:
     """Create and return a configured Kafka consumer."""
@@ -27,8 +32,12 @@ def create_consumer() -> Consumer:
     return consumer
 
 
-def poll_message(consumer: Consumer) -> pd.DataFrame | None:
-    """Poll for a single message and return as DataFrame, or None if no message."""
+def poll_message(consumer: Consumer) -> tuple[pd.DataFrame, bytes] | None:
+    """Poll for a single message and return (DataFrame, raw_bytes), or None.
+
+    If the message payload cannot be deserialized the raw bytes are forwarded to
+    the DLQ and the offset is committed so the consumer can move on.
+    """
     msg = consumer.poll(timeout=settings.kafka_poll_timeout)
 
     if msg is None:
@@ -53,9 +62,17 @@ def poll_message(consumer: Consumer) -> pd.DataFrame | None:
         {k: v.decode() if isinstance(v, bytes) else v for k, v in headers.items()},
     )
 
-    df = read_parquet_bytes(msg.value())
+    raw_bytes = msg.value()
+    try:
+        df = read_parquet_bytes(raw_bytes)
+    except Exception as exc:
+        logger.error("Failed to deserialize message payload: %s", exc)
+        _send_to_dlq(raw_bytes, f"deserialization error: {exc}", msg.topic())
+        commit_offset(consumer)
+        return None
+
     logger.info("Deserialized parquet with %d rows", len(df))
-    return df
+    return df, raw_bytes
 
 
 def commit_offset(consumer: Consumer) -> None:

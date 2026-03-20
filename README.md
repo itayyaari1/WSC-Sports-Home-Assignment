@@ -23,10 +23,10 @@ A data engineering pipeline that scrapes job positions from WSC Sports' careers 
 
 **Consumer**
 1. Polls Kafka for messages
-2. Deserializes Parquet bytes back to DataFrame
-3. Enriches each position (see table below)
-4. Uploads enriched Parquet to MinIO with date-partitioned keys
-5. Commits Kafka offset only after a successful upload (at-least-once guarantee)
+2. Deserializes Parquet bytes back to DataFrame — corrupt payloads are forwarded to the DLQ
+3. Enriches each position (see table below) — enrichment failures are forwarded to the DLQ
+4. Uploads enriched Parquet to MinIO with date-partitioned keys — upload failures are forwarded to the DLQ
+5. Commits Kafka offset only after a successful upload **or** a successful DLQ publish (at-least-once guarantee)
 
 **Enrichment columns added by the consumer:**
 
@@ -36,6 +36,18 @@ A data engineering pipeline that scrapes job positions from WSC Sports' careers 
 | `seniority_level` | Junior, Mid, Senior, or Lead — title keyword matching |
 | `complexity_score` | 0–100 heuristic (seniority 40pts, category 30pts, specificity 15pts, modifiers 15pts) |
 | `enriched_at` | UTC timestamp |
+
+**Dead Letter Queue (DLQ)**
+
+Messages that fail at any processing stage are never silently dropped. Instead they are forwarded to the Kafka topic `wsc-positions-dlq` with three headers attached:
+
+| Header | Content |
+|--------|---------|
+| `error-reason` | Human-readable description of the failure (e.g. `s3 upload error: timeout`) |
+| `original-topic` | The topic the message was originally consumed from (`wsc-positions`) |
+| `failed-at` | UTC ISO-8601 timestamp of the failure |
+
+The original raw Parquet bytes are preserved, so a DLQ message can be replayed to the main topic once the underlying issue is fixed.
 
 **S3 output layout:**
 ```
@@ -77,13 +89,15 @@ WSC-Sports-Home-Assignment/
 │   ├── src/
 │   │   ├── main.py                # Entry point & poll loop
 │   │   ├── kafka_consumer.py      # Kafka message consumption
+│   │   ├── dlq_producer.py        # Dead Letter Queue publisher
 │   │   ├── enrichment.py          # Category, seniority & complexity scoring
 │   │   ├── storage.py             # S3 upload with tenacity retry logic
 │   │   ├── url_cache.py           # Careers page URL cache
 │   │   └── config.py              # ConsumerSettings (extends SharedBaseSettings)
 │   ├── tests/
 │   │   ├── test_enrichment.py
-│   │   └── test_storage.py
+│   │   ├── test_storage.py
+│   │   └── test_dlq.py
 │   ├── Dockerfile
 │   └── requirements.txt
 │
@@ -327,6 +341,7 @@ All configuration via environment variables (see `.env.example`):
 | `KAFKA_TOPIC` | `wsc-positions` | Kafka topic name |
 | `KAFKA_GROUP_ID` | `wsc-consumer-group` | Consumer group ID |
 | `KAFKA_AUTO_OFFSET_RESET` | `earliest` | Offset reset policy |
+| `DLQ_TOPIC` | `wsc-positions-dlq` | Dead Letter Queue topic name |
 | `CAREERS_URL` | `https://wsc-sports.com/Careers` | URL to scrape |
 | `SCRAPE_TIMEOUT_SECONDS` | `30` | Scraper HTTP timeout |
 | `SCRAPE_RETRIES` | `3` | Scraper retry attempts |
@@ -365,7 +380,8 @@ For a batch of N positions this reduces wall-clock fetch time from `O(N × laten
 - **confluent-kafka** over kafka-python — production-grade, actively maintained, better performance
 - **In-memory Parquet** — no disk I/O in containers, cleaner and more portable
 - **MinIO for local S3** — S3-compatible, avoids AWS costs during development; identical API
-- **Manual offset commit** — at-least-once delivery guarantee; offset committed only after S3 upload succeeds
+- **Manual offset commit** — at-least-once delivery guarantee; offset committed only after S3 upload succeeds or a DLQ publish succeeds
+- **Dead Letter Queue** — failed messages (corrupt payload, enrichment error, S3 failure) are forwarded to `wsc-positions-dlq` with error headers instead of causing infinite retry loops
 - **Pydantic Settings** — typed configuration with validation, auto-loads from env vars
 - **Tenacity retries** — exponential backoff on scraping and S3 uploads for resilience
 - **Shared module** — `shared/` avoids code duplication between producer and consumer (HTML parsing, Parquet I/O, base config)

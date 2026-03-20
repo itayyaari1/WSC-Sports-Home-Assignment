@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from shared.logger import get_logger
+from src.config import settings
+from src.dlq_producer import publish_to_dlq
 from src.enrichment import enrich_positions
 from src.kafka_consumer import commit_offset, create_consumer, poll_message
 from src.models import BasePosition, EnrichedPosition
@@ -44,10 +46,12 @@ def run():
 
     try:
         while True:
-            df = poll_message(consumer)
+            result = poll_message(consumer)
 
-            if df is None:
+            if result is None:
                 continue
+
+            df, raw_bytes = result
 
             # Convert DataFrame rows to Position models
             positions = _df_to_positions(df)
@@ -56,7 +60,9 @@ def run():
             try:
                 enriched = enrich_positions(positions)
             except Exception as e:
-                logger.error("Enrichment failed: %s", e)
+                logger.error("Enrichment failed, forwarding to DLQ: %s", e)
+                publish_to_dlq(raw_bytes, f"enrichment error: {e}", settings.kafka_topic)
+                commit_offset(consumer)
                 continue
 
             # Convert enriched models back to DataFrame for storage
@@ -67,7 +73,9 @@ def run():
                 s3_key = upload_to_s3(enriched_df)
                 logger.info("Successfully processed and uploaded to %s", s3_key)
             except Exception as e:
-                logger.error("S3 upload failed, will retry on next poll: %s", e)
+                logger.error("S3 upload failed after retries, forwarding to DLQ: %s", e)
+                publish_to_dlq(raw_bytes, f"s3 upload error: {e}", settings.kafka_topic)
+                commit_offset(consumer)
                 continue
 
             # Commit offset only after successful upload

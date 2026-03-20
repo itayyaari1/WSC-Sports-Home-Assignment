@@ -14,5 +14,7 @@ class ConsumerSettings(SharedBaseSettings):
 
     url_cache_path: str = "url_cache.json"
 
+    dlq_topic: str = "wsc-positions-dlq"
+
 
 settings = ConsumerSettings()

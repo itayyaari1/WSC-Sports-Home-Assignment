@@ -38,13 +38,8 @@ class DlqProducer:
                 msg.offset(),
             )
 
-    def publish(self, raw_bytes: bytes, error_reason: str, original_topic: str) -> None:
+    def publish(self, rw_abytes: bytes, error_reason: str, original_topic: str) -> None:
         """Publish a failed message to the DLQ topic with error metadata in headers.
-
-        Headers attached:
-            error-reason    – human-readable description of why processing failed
-            original-topic  – the Kafka topic the message was originally consumed from
-            failed-at       – UTC ISO-8601 timestamp of the failure
         """
         # Guard against None bytes (tombstone message)
         if raw_bytes is None:

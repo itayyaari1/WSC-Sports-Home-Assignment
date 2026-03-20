@@ -16,7 +16,8 @@ WSC Careers Page → Producer (scrape + parquet) → Kafka → Consumer (enrich 
 - **confluent-kafka** over kafka-python: Production-grade, actively maintained, better performance
 - **In-memory Parquet**: No disk I/O — cleaner and more portable in containers
 - **LocalStack for local S3**: Avoids AWS costs during development, identical API
-- **Manual offset commit**: Ensures at-least-once delivery — offset committed only after S3 upload succeeds
+- **Manual offset commit**: Ensures at-least-once delivery — offset committed only after S3 upload succeeds or DLQ publish succeeds
+- **Dead Letter Queue**: Failed messages (deserialization, enrichment, S3 failure) are routed to `wsc-positions-dlq` with error metadata, avoiding silent drops or infinite retries
 - **Pydantic Settings**: Typed configuration with validation, auto-loads from env vars
 - **Tenacity retries**: Exponential backoff on scraping and S3 uploads for resilience
 
@@ -42,11 +43,15 @@ consumer/                    # Consumes from Kafka, enriches data, uploads to S3
 ├── src/
 │   ├── main.py            # Entry point & consumer loop
 │   ├── kafka_consumer.py  # Kafka message consumption (uses shared.parquet_io)
+│   ├── dlq_producer.py    # Dead Letter Queue publisher with error metadata headers
 │   ├── enrichment.py      # Category, seniority & complexity scoring
 │   ├── storage.py         # S3 upload with retry logic (uses shared.parquet_io)
 │   ├── url_cache.py       # Careers page URL cache (uses shared.careers_html)
 │   └── config.py          # ConsumerSettings extends SharedBaseSettings
 └── tests/
+   ├── test_enrichment.py  # Category, seniority, complexity scoring logic
+   ├── test_storage.py     # S3 upload with retries
+   └── test_dlq.py         # Dead Letter Queue routing behavior
 
 docker-compose.yml          # Zookeeper, Kafka, LocalStack, Producer, Consumer services
 localstack-init/            # LocalStack S3 bucket initialization script
@@ -110,13 +115,24 @@ cd consumer && .venv/bin/python -c "import pandas as pd; print(pd.read_parquet('
 ### Consumer
 1. Polls Kafka topic `wsc-positions`
 2. Deserializes Parquet bytes back to DataFrame
+   - **Deserialization failure** → Routes to DLQ with error reason header, commits offset
 3. Enriches each position with:
    - **category**: Engineering, Product, Design, Operations, or Other (keyword-based)
    - **seniority_level**: Junior, Mid, Senior, or Lead (title keywords)
    - **complexity_score**: 0-100 heuristic (seniority 40pts, category depth 30pts, specificity 15pts, modifiers 15pts)
    - **enriched_at**: UTC timestamp
+   - **Enrichment failure** → Routes to DLQ with error reason header, commits offset
 4. Uploads enriched Parquet to S3 with date-partitioned keys: `positions/year=YYYY/month=MM/day=DD/positions_TIMESTAMP.parquet`
+   - **Upload failure** → Routes to DLQ with error reason header, commits offset
 5. Commits Kafka offset only after successful S3 upload (at-least-once guarantee)
+
+**Dead Letter Queue:**
+Messages sent to DLQ include three headers:
+- `error-reason`: Human-readable failure description
+- `original-topic`: Source topic (e.g., `wsc-positions`)
+- `failed-at`: UTC ISO-8601 timestamp
+
+Raw Parquet bytes are preserved, allowing replay to the main topic after fixes.
 
 ### Enrichment Notes
 - Enrichment is title-based only (full job descriptions not available from careers listing)
@@ -132,6 +148,7 @@ All configuration via environment variables (see `.env.example`):
 | `KAFKA_TOPIC` | `wsc-positions` | Kafka topic name |
 | `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | Kafka security protocol |
 | `KAFKA_GROUP_ID` | `wsc-consumer-group` | Consumer group ID |
+| `DLQ_TOPIC` | `wsc-positions-dlq` | Dead Letter Queue topic name |
 | `CAREERS_URL` | `https://wsc-sports.com/Careers` | URL to scrape |
 | `SCRAPE_TIMEOUT_SECONDS` | `30` | Scraper timeout |
 | `SCRAPE_RETRIES` | `3` | Scraper retry attempts |
@@ -151,9 +168,10 @@ producer/tests/
 consumer/tests/
 ├── test_enrichment.py      # Category, seniority, complexity scoring logic
 ├── test_storage.py         # S3 upload with retries
+├── test_dlq.py             # DLQ routing on deserialization/enrichment/upload failures
 ```
 
-All tests run via `make test`.
+All tests run via `make test` (on host with local venvs) or `make test-docker` (in containers).
 
 ## Docker & Local Development
 
@@ -177,5 +195,10 @@ Services use healthchecks to wait for dependencies. Run `make up` to start all i
 - **Shared modules**: Common code lives in `shared/` and is imported by both services; avoids duplication of HTML parsing, Parquet I/O, and base config
 - **Pydantic for config**: `ProducerSettings` and `ConsumerSettings` both extend `SharedBaseSettings` from `shared/config.py`; service-specific fields are added in each service's `config.py`
 - **Retry logic**: Scraper and storage both use `tenacity` for exponential backoff
-- **Kafka offset commit**: Consumer only commits after successful upload to ensure at-least-once delivery
+- **Kafka offset commit**: Consumer commits offset only after successful S3 upload **or** successful DLQ publish (at-least-once guarantee); no message is silently dropped
+- **Dead Letter Queue routing**: Three failure modes are caught and routed to DLQ:
+  1. Deserialization error (corrupt Parquet payload) in `kafka_consumer.poll_message()`
+  2. Enrichment error in `main.run()` enrichment step
+  3. S3 upload error in `main.run()` upload step
+  - Each message includes error metadata in headers; raw bytes preserved for replay
 - **In-memory Parquet**: No temporary files — serialize/deserialize via `shared.parquet_io` helpers in memory for simplicity and portability

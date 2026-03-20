@@ -96,17 +96,6 @@ class PositionScraper:
         return positions
 
 
-def fetch_position_html(url: str) -> str | None:
-    """Fetch the HTML for a single career position page. Returns None on failure."""
-    try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        return response.text
-    except Exception as e:
-        logger.warning("Failed to fetch position page %s: %s", url, e)
-        return None
-
-
 def parse_years_of_experience(req_block: BeautifulSoup) -> int:
     """Extract the maximum years-of-experience figure from the requirements block."""
     text = req_block.get_text(" ", strip=True)
@@ -120,11 +109,3 @@ def parse_skills_count(req_block: BeautifulSoup) -> int:
     """Count the number of <li> items inside the requirements block."""
     return len(req_block.find_all("li"))
 
-
-def detect_seniority_keyword(soup: BeautifulSoup, seniority_keywords: list[str]) -> bool:
-    """Return True if the <h1> title contains a seniority keyword."""
-    h1 = soup.select_one("h1")
-    if not h1:
-        return False
-    title_lower = h1.get_text(" ", strip=True).lower()
-    return any(kw in title_lower for kw in seniority_keywords)

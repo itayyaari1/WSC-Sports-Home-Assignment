@@ -6,7 +6,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from src.storage import generate_s3_key, df_to_parquet_bytes, upload_to_s3
+from src.storage import generate_s3_key, df_to_parquet_bytes
 
 
 class TestGenerateS3Key:
@@ -39,11 +39,14 @@ class TestDfToParquetBytes:
         assert "category" in table.column_names
 
 
-class TestUploadToS3:
-    @patch("src.storage.create_s3_client")
-    def test_upload_calls_put_object(self, mock_create_client):
+class TestS3Uploader:
+    @patch("src.storage.boto3")
+    def test_upload_calls_put_object(self, mock_boto3):
         mock_client = MagicMock()
-        mock_create_client.return_value = mock_client
+        mock_boto3.client.return_value = mock_client
+
+        from src.storage import S3Uploader
+        uploader = S3Uploader()
 
         df = pd.DataFrame({
             "Index": pd.array([1], dtype="int32"),
@@ -54,7 +57,7 @@ class TestUploadToS3:
             "enriched_at": [datetime.now(timezone.utc)],
         })
 
-        key = upload_to_s3(df)
+        key = uploader.upload(df)
 
         mock_client.put_object.assert_called_once()
         call_kwargs = mock_client.put_object.call_args[1]

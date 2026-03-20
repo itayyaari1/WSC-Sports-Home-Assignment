@@ -1,16 +1,15 @@
 """Tests for Dead Letter Queue (DLQ) behaviour.
 
 Covers three layers:
-  1. dlq_producer  – publish_to_dlq() calls the Kafka producer with correct headers
-  2. kafka_consumer – poll_message() routes corrupt payloads to the DLQ
+  1. DlqProducer  – publish() calls the Kafka producer with correct headers
+  2. KafkaConsumer – poll() routes corrupt payloads to the DLQ
   3. main          – enrichment / S3 failures are forwarded to the DLQ and offset committed
 """
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import io
 
 import pandas as pd
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from shared.parquet_io import write_parquet_bytes
@@ -39,22 +38,18 @@ def _make_parquet_bytes() -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# 1. dlq_producer
+# 1. DlqProducer
 # ---------------------------------------------------------------------------
 
-class TestPublishToDlq:
-    def setup_method(self):
-        # Reset the module-level singleton so tests are isolated.
-        import src.dlq_producer as mod
-        mod._producer = None
-
+class TestDlqProducer:
     @patch("src.dlq_producer.Producer")
     def test_produces_to_dlq_topic(self, MockProducer):
         mock_producer = MagicMock()
         MockProducer.return_value = mock_producer
 
-        from src.dlq_producer import publish_to_dlq
-        publish_to_dlq(b"raw", "enrichment error: boom", "wsc-positions")
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+        dlq.publish(b"raw", "enrichment error: boom", "wsc-positions")
 
         mock_producer.produce.assert_called_once()
         kwargs = mock_producer.produce.call_args[1]
@@ -66,8 +61,9 @@ class TestPublishToDlq:
         mock_producer = MagicMock()
         MockProducer.return_value = mock_producer
 
-        from src.dlq_producer import publish_to_dlq
-        publish_to_dlq(b"raw", "s3 upload error: timeout", "wsc-positions")
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+        dlq.publish(b"raw", "s3 upload error: timeout", "wsc-positions")
 
         headers = dict(mock_producer.produce.call_args[1]["headers"])
         assert headers["error-reason"] == b"s3 upload error: timeout"
@@ -79,30 +75,32 @@ class TestPublishToDlq:
         mock_producer = MagicMock()
         MockProducer.return_value = mock_producer
 
-        from src.dlq_producer import publish_to_dlq
-        publish_to_dlq(b"raw", "any error", "wsc-positions")
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+        dlq.publish(b"raw", "any error", "wsc-positions")
 
         mock_producer.flush.assert_called_once()
 
     @patch("src.dlq_producer.Producer")
-    def test_singleton_producer_reused(self, MockProducer):
+    def test_producer_created_once_per_instance(self, MockProducer):
         mock_producer = MagicMock()
         MockProducer.return_value = mock_producer
 
-        from src.dlq_producer import publish_to_dlq
-        publish_to_dlq(b"a", "err1", "topic")
-        publish_to_dlq(b"b", "err2", "topic")
+        from src.dlq_producer import DlqProducer
+        dlq = DlqProducer()
+        dlq.publish(b"a", "err1", "topic")
+        dlq.publish(b"b", "err2", "topic")
 
-        # Producer() constructor called only once despite two publishes
+        # Producer() constructor called only once in __init__ despite two publishes
         assert MockProducer.call_count == 1
         assert mock_producer.produce.call_count == 2
 
 
 # ---------------------------------------------------------------------------
-# 2. kafka_consumer – deserialization failure path
+# 2. KafkaConsumer – deserialization failure path
 # ---------------------------------------------------------------------------
 
-class TestPollMessageDlqOnDeserError:
+class TestKafkaConsumerDlqOnDeserError:
     def _make_kafka_message(self, value: bytes, topic: str = "wsc-positions"):
         msg = MagicMock()
         msg.error.return_value = None
@@ -113,49 +111,52 @@ class TestPollMessageDlqOnDeserError:
         msg.headers.return_value = []
         return msg
 
-    @patch("src.kafka_consumer.commit_offset")
-    @patch("src.kafka_consumer._send_to_dlq")
+    @patch("src.kafka_consumer.Consumer")
     @patch("src.kafka_consumer.read_parquet_bytes", side_effect=Exception("corrupt payload"))
-    def test_corrupt_message_sent_to_dlq(self, _mock_read, mock_dlq, mock_commit):
-        from src.kafka_consumer import poll_message
+    def test_corrupt_message_sent_to_dlq(self, _mock_read, MockConsumer):
+        from src.kafka_consumer import KafkaConsumer
+        from src.dlq_producer import DlqProducer
 
-        consumer = MagicMock()
-        consumer.poll.return_value = self._make_kafka_message(b"not-parquet")
+        mock_dlq = MagicMock(spec=DlqProducer)
+        kc = KafkaConsumer(dlq_producer=mock_dlq)
+        kc._consumer.poll.return_value = self._make_kafka_message(b"not-parquet")
 
-        result = poll_message(consumer)
+        result = kc.poll()
 
         assert result is None
-        mock_dlq.assert_called_once()
-        reason_arg = mock_dlq.call_args[0][1]
+        mock_dlq.publish.assert_called_once()
+        reason_arg = mock_dlq.publish.call_args[0][1]
         assert "deserialization error" in reason_arg
 
-    @patch("src.kafka_consumer.commit_offset")
-    @patch("src.kafka_consumer._send_to_dlq")
+    @patch("src.kafka_consumer.Consumer")
     @patch("src.kafka_consumer.read_parquet_bytes", side_effect=Exception("corrupt"))
-    def test_offset_committed_after_dlq_on_deser_error(self, _mock_read, mock_dlq, mock_commit):
-        from src.kafka_consumer import poll_message
+    def test_offset_committed_after_dlq_on_deser_error(self, _mock_read, MockConsumer):
+        from src.kafka_consumer import KafkaConsumer
+        from src.dlq_producer import DlqProducer
 
-        consumer = MagicMock()
-        consumer.poll.return_value = self._make_kafka_message(b"bad")
+        mock_dlq = MagicMock(spec=DlqProducer)
+        kc = KafkaConsumer(dlq_producer=mock_dlq)
+        kc._consumer.poll.return_value = self._make_kafka_message(b"bad")
 
-        poll_message(consumer)
+        kc.poll()
 
-        mock_commit.assert_called_once_with(consumer)
+        kc._consumer.commit.assert_called_once_with(asynchronous=False)
 
-    @patch("src.kafka_consumer.commit_offset")
-    @patch("src.kafka_consumer._send_to_dlq")
-    def test_valid_message_not_sent_to_dlq(self, mock_dlq, _mock_commit):
-        from src.kafka_consumer import poll_message
+    @patch("src.kafka_consumer.Consumer")
+    def test_valid_message_not_sent_to_dlq(self, MockConsumer):
+        from src.kafka_consumer import KafkaConsumer
+        from src.dlq_producer import DlqProducer
 
-        consumer = MagicMock()
-        consumer.poll.return_value = self._make_kafka_message(_make_parquet_bytes())
+        mock_dlq = MagicMock(spec=DlqProducer)
+        kc = KafkaConsumer(dlq_producer=mock_dlq)
+        kc._consumer.poll.return_value = self._make_kafka_message(_make_parquet_bytes())
 
-        result = poll_message(consumer)
+        result = kc.poll()
 
         assert result is not None
         df, raw = result
         assert isinstance(df, pd.DataFrame)
-        mock_dlq.assert_not_called()
+        mock_dlq.publish.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -170,35 +171,33 @@ class TestMainDlqPaths:
         df = pd.read_parquet(io.BytesIO(raw))
         return df, raw
 
-    @patch("src.main.commit_offset")
-    @patch("src.main.publish_to_dlq")
-    @patch("src.main.upload_to_s3")
+    @patch("src.main.S3Uploader")
+    @patch("src.main.KafkaConsumer")
+    @patch("src.main.DlqProducer")
     @patch("src.main.enrich_positions", side_effect=RuntimeError("enrichment boom"))
-    @patch("src.main.poll_message")
-    @patch("src.main.create_consumer")
     def test_enrichment_failure_routes_to_dlq(
-        self, mock_create, mock_poll, _mock_enrich, mock_s3, mock_dlq, mock_commit
+        self, _mock_enrich, MockDlq, MockConsumer, MockUploader
     ):
-        mock_poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
+        mock_dlq = MockDlq.return_value
+        mock_consumer = MockConsumer.return_value
+        mock_consumer.poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
 
         from src.main import run
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             run()
 
-        mock_dlq.assert_called_once()
-        reason = mock_dlq.call_args[0][1]
+        mock_dlq.publish.assert_called_once()
+        reason = mock_dlq.publish.call_args[0][1]
         assert "enrichment error" in reason
-        mock_commit.assert_called()
-        mock_s3.assert_not_called()
+        mock_consumer.commit_offset.assert_called()
+        MockUploader.return_value.upload.assert_not_called()
 
-    @patch("src.main.commit_offset")
-    @patch("src.main.publish_to_dlq")
-    @patch("src.main.upload_to_s3", side_effect=Exception("s3 down"))
+    @patch("src.main.S3Uploader")
+    @patch("src.main.KafkaConsumer")
+    @patch("src.main.DlqProducer")
     @patch("src.main.enrich_positions")
-    @patch("src.main.poll_message")
-    @patch("src.main.create_consumer")
     def test_s3_failure_routes_to_dlq(
-        self, mock_create, mock_poll, mock_enrich, _mock_s3, mock_dlq, mock_commit
+        self, mock_enrich, MockDlq, MockConsumer, MockUploader
     ):
         from src.models import EnrichedPosition
         mock_enrich.return_value = [
@@ -213,25 +212,26 @@ class TestMainDlqPaths:
                 complexity_score=72,
             )
         ]
-        mock_poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
+        mock_dlq = MockDlq.return_value
+        mock_consumer = MockConsumer.return_value
+        mock_consumer.poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
+        MockUploader.return_value.upload.side_effect = Exception("s3 down")
 
         from src.main import run
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             run()
 
-        mock_dlq.assert_called_once()
-        reason = mock_dlq.call_args[0][1]
+        mock_dlq.publish.assert_called_once()
+        reason = mock_dlq.publish.call_args[0][1]
         assert "s3 upload error" in reason
-        mock_commit.assert_called()
+        mock_consumer.commit_offset.assert_called()
 
-    @patch("src.main.commit_offset")
-    @patch("src.main.publish_to_dlq")
-    @patch("src.main.upload_to_s3")
+    @patch("src.main.S3Uploader")
+    @patch("src.main.KafkaConsumer")
+    @patch("src.main.DlqProducer")
     @patch("src.main.enrich_positions")
-    @patch("src.main.poll_message")
-    @patch("src.main.create_consumer")
     def test_successful_processing_does_not_use_dlq(
-        self, mock_create, mock_poll, mock_enrich, mock_s3, mock_dlq, mock_commit
+        self, mock_enrich, MockDlq, MockConsumer, MockUploader
     ):
         from src.models import EnrichedPosition
         mock_enrich.return_value = [
@@ -246,12 +246,15 @@ class TestMainDlqPaths:
                 complexity_score=72,
             )
         ]
-        mock_s3.return_value = "positions/year=2026/month=03/day=20/positions_123.parquet"
-        mock_poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
+        mock_consumer = MockConsumer.return_value
+        MockUploader.return_value.upload.return_value = (
+            "positions/year=2026/month=03/day=20/positions_123.parquet"
+        )
+        mock_consumer.poll.side_effect = [self._make_poll_result(), KeyboardInterrupt]
 
         from src.main import run
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             run()
 
-        mock_dlq.assert_not_called()
-        mock_commit.assert_called()
+        MockDlq.return_value.publish.assert_not_called()
+        mock_consumer.commit_offset.assert_called()

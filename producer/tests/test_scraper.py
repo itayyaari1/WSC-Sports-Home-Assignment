@@ -1,12 +1,8 @@
 import pytest
 from unittest.mock import patch
 
-from src.scraper import (
-    PositionScraper,
-    normalize_title,
-    strip_view_position_suffix,
-    ScraperError,
-)
+from src.scraper import PositionScraper, ScraperError
+from shared.careers_html import normalize_title, strip_view_position_suffix
 
 
 SAMPLE_HTML = """

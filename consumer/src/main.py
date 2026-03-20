@@ -5,11 +5,11 @@ import pandas as pd
 
 from shared.logger import get_logger
 from src.config import settings
-from src.dlq_producer import publish_to_dlq
+from src.dlq_producer import DlqProducer
 from src.enrichment import enrich_positions
-from src.kafka_consumer import commit_offset, create_consumer, poll_message
+from src.kafka_consumer import KafkaConsumer
 from src.models import BasePosition, EnrichedPosition
-from src.storage import upload_to_s3
+from src.storage import S3Uploader
 
 logger = get_logger(__name__)
 
@@ -42,11 +42,13 @@ def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
 def run():
     """Main consumer loop: consume -> enrich -> upload -> commit."""
     logger.info("Starting WSC Sports position consumer")
-    consumer = create_consumer()
+    dlq = DlqProducer()
+    consumer = KafkaConsumer(dlq_producer=dlq)
+    uploader = S3Uploader()
 
     try:
         while True:
-            result = poll_message(consumer)
+            result = consumer.poll()
 
             if result is None:
                 continue
@@ -61,8 +63,8 @@ def run():
                 enriched = enrich_positions(positions)
             except Exception as e:
                 logger.error("Enrichment failed, forwarding to DLQ: %s", e)
-                publish_to_dlq(raw_bytes, f"enrichment error: {e}", settings.kafka_topic)
-                commit_offset(consumer)
+                dlq.publish(raw_bytes, f"enrichment error: {e}", settings.kafka_topic)
+                consumer.commit_offset()
                 continue
 
             # Convert enriched models back to DataFrame for storage
@@ -70,16 +72,16 @@ def run():
 
             # Upload to S3
             try:
-                s3_key = upload_to_s3(enriched_df)
+                s3_key = uploader.upload(enriched_df)
                 logger.info("Successfully processed and uploaded to %s", s3_key)
             except Exception as e:
                 logger.error("S3 upload failed after retries, forwarding to DLQ: %s", e)
-                publish_to_dlq(raw_bytes, f"s3 upload error: {e}", settings.kafka_topic)
-                commit_offset(consumer)
+                dlq.publish(raw_bytes, f"s3 upload error: {e}", settings.kafka_topic)
+                consumer.commit_offset()
                 continue
 
             # Commit offset only after successful upload
-            commit_offset(consumer)
+            consumer.commit_offset()
 
     except Exception as e:
         logger.error("Unexpected error in consumer loop: %s", e)

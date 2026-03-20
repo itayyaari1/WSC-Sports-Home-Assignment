@@ -1,7 +1,7 @@
 from shared.scraper import PositionScraper, ScraperError
 from src.config import settings
 
-__all__ = ["ScraperError", "make_scraper"]
+__all__ = ["PositionScraper", "ScraperError", "make_scraper"]
 
 
 def make_scraper() -> PositionScraper:

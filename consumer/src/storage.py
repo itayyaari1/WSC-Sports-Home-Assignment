@@ -22,19 +22,6 @@ ENRICHED_SCHEMA = pa.schema([
 ])
 
 
-def create_s3_client():
-    """Create an S3 client, using endpoint URL for local development."""
-    kwargs = {
-        "service_name": "s3",
-        "region_name": settings.aws_region,
-        "aws_access_key_id": settings.aws_access_key_id,
-        "aws_secret_access_key": settings.aws_secret_access_key,
-    }
-    if settings.s3_endpoint_url:
-        kwargs["endpoint_url"] = settings.s3_endpoint_url
-    return boto3.client(**kwargs)
-
-
 def generate_s3_key() -> str:
     """Generate a date-partitioned S3 key for the parquet file."""
     now = datetime.now(timezone.utc)
@@ -50,35 +37,49 @@ def df_to_parquet_bytes(df: pd.DataFrame) -> bytes:
     return write_parquet_bytes(table)
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(ClientError),
-    before_sleep=lambda retry_state: logger.warning(
-        "S3 upload attempt %d failed, retrying...", retry_state.attempt_number
-    ),
-)
-def upload_to_s3(df: pd.DataFrame) -> str:
-    """Upload enriched DataFrame as parquet to S3.
+class S3Uploader:
+    """Uploads enriched position data as Parquet files to S3."""
 
-    Returns:
-        The S3 key where the file was uploaded.
-    """
-    s3_client = create_s3_client()
-    parquet_bytes = df_to_parquet_bytes(df)
-    s3_key = generate_s3_key()
+    def __init__(self) -> None:
+        kwargs = {
+            "service_name": "s3",
+            "region_name": settings.aws_region,
+            "aws_access_key_id": settings.aws_access_key_id,
+            "aws_secret_access_key": settings.aws_secret_access_key,
+        }
+        if settings.s3_endpoint_url:
+            kwargs["endpoint_url"] = settings.s3_endpoint_url
+        self._client = boto3.client(**kwargs)
+        self._bucket = settings.s3_bucket
 
-    s3_client.put_object(
-        Bucket=settings.s3_bucket,
-        Key=s3_key,
-        Body=parquet_bytes,
-        ContentType="application/octet-stream",
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(ClientError),
+        before_sleep=lambda retry_state: logger.warning(
+            "S3 upload attempt %d failed, retrying...", retry_state.attempt_number
+        ),
     )
+    def upload(self, df: pd.DataFrame) -> str:
+        """Upload enriched DataFrame as parquet to S3.
 
-    logger.info(
-        "Uploaded enriched parquet to s3://%s/%s (%d bytes)",
-        settings.s3_bucket,
-        s3_key,
-        len(parquet_bytes),
-    )
-    return s3_key
+        Returns:
+            The S3 key where the file was uploaded.
+        """
+        parquet_bytes = df_to_parquet_bytes(df)
+        s3_key = generate_s3_key()
+
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=s3_key,
+            Body=parquet_bytes,
+            ContentType="application/octet-stream",
+        )
+
+        logger.info(
+            "Uploaded enriched parquet to s3://%s/%s (%d bytes)",
+            self._bucket,
+            s3_key,
+            len(parquet_bytes),
+        )
+        return s3_key

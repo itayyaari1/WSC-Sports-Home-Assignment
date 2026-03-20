@@ -2,11 +2,24 @@ import io
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
-import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from src.storage import generate_s3_key, df_to_parquet_bytes
+from src.models import EnrichedPosition
+from src.storage import generate_s3_key, enriched_to_parquet_bytes
+
+
+def _make_enriched(index=1, title="Test Engineer") -> EnrichedPosition:
+    return EnrichedPosition(
+        index=index,
+        title=title,
+        url="https://wsc-sports.com/Careers/1",
+        category="Engineering",
+        seniority_level="Mid",
+        years_of_experience=2,
+        skills_count=4,
+        complexity_score=50,
+    )
 
 
 class TestGenerateS3Key:
@@ -23,17 +36,9 @@ class TestGenerateS3Key:
         assert key.endswith(".parquet")
 
 
-class TestDfToParquetBytes:
+class TestEnrichedToParquetBytes:
     def test_produces_valid_parquet(self):
-        df = pd.DataFrame({
-            "Index": pd.array([1], dtype="int32"),
-            "Position_Title": ["Test Engineer"],
-            "category": ["Engineering"],
-            "seniority_level": ["Mid"],
-            "complexity_score": pd.array([50], dtype="int32"),
-            "enriched_at": [datetime.now(timezone.utc)],
-        })
-        parquet_bytes = df_to_parquet_bytes(df)
+        parquet_bytes = enriched_to_parquet_bytes([_make_enriched()])
         table = pq.read_table(io.BytesIO(parquet_bytes))
         assert len(table) == 1
         assert "category" in table.column_names
@@ -48,16 +53,7 @@ class TestS3Uploader:
         from src.storage import S3Uploader
         uploader = S3Uploader()
 
-        df = pd.DataFrame({
-            "Index": pd.array([1], dtype="int32"),
-            "Position_Title": ["Test"],
-            "category": ["Other"],
-            "seniority_level": ["Mid"],
-            "complexity_score": pd.array([30], dtype="int32"),
-            "enriched_at": [datetime.now(timezone.utc)],
-        })
-
-        key = uploader.upload(df)
+        key = uploader.upload([_make_enriched()])
 
         mock_client.put_object.assert_called_once()
         call_kwargs = mock_client.put_object.call_args[1]
@@ -72,27 +68,16 @@ class TestS3Uploader:
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
 
-        # First call raises ClientError, second call succeeds
         mock_client.put_object.side_effect = [
             ClientError({"Error": {"Code": "ServiceUnavailable"}}, "PutObject"),
-            None  # Success on retry
+            None,
         ]
 
         from src.storage import S3Uploader
         uploader = S3Uploader()
 
-        df = pd.DataFrame({
-            "Index": pd.array([1], dtype="int32"),
-            "Position_Title": ["Test"],
-            "category": ["Other"],
-            "seniority_level": ["Mid"],
-            "complexity_score": pd.array([30], dtype="int32"),
-            "enriched_at": [datetime.now(timezone.utc)],
-        })
+        key = uploader.upload([_make_enriched()])
 
-        key = uploader.upload(df)
-
-        # Should have been called twice (failure + retry)
         assert mock_client.put_object.call_count == 2
         assert key is not None
 
@@ -100,11 +85,9 @@ class TestS3Uploader:
     def test_exhausted_retries_raise_client_error(self, mock_boto3):
         """Test that exhausting retries propagates the ClientError."""
         from botocore.exceptions import ClientError
-        from tenacity import RetryError
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
 
-        # Always raise ClientError
         mock_client.put_object.side_effect = ClientError(
             {"Error": {"Code": "PutObject"}}, "PutObject"
         )
@@ -112,42 +95,21 @@ class TestS3Uploader:
         from src.storage import S3Uploader
         uploader = S3Uploader()
 
-        df = pd.DataFrame({
-            "Index": pd.array([1], dtype="int32"),
-            "Position_Title": ["Test"],
-            "category": ["Other"],
-            "seniority_level": ["Mid"],
-            "complexity_score": pd.array([30], dtype="int32"),
-            "enriched_at": [datetime.now(timezone.utc)],
-        })
-
-        # The retry decorator wraps the exception in RetryError
         with pytest.raises((ClientError, Exception)):
-            uploader.upload(df)
+            uploader.upload([_make_enriched()])
 
-        # Should have retried 3 times
         assert mock_client.put_object.call_count == 3
 
     @patch("src.storage.boto3")
-    def test_empty_dataframe_raises_error(self, mock_boto3):
-        """Test that uploading an empty DataFrame raises ValueError."""
+    def test_empty_list_raises_error(self, mock_boto3):
+        """Test that uploading an empty list raises ValueError."""
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
 
         from src.storage import S3Uploader
         uploader = S3Uploader()
 
-        empty_df = pd.DataFrame({
-            "Index": pd.array([], dtype="int32"),
-            "Position_Title": [],
-            "category": [],
-            "seniority_level": [],
-            "complexity_score": pd.array([], dtype="int32"),
-            "enriched_at": [],
-        })
+        with pytest.raises(ValueError, match="Refusing to upload empty"):
+            uploader.upload([])
 
-        with pytest.raises(ValueError, match="Refusing to upload empty DataFrame"):
-            uploader.upload(empty_df)
-
-        # put_object should not have been called
         mock_client.put_object.assert_not_called()

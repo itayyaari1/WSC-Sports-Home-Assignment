@@ -6,13 +6,11 @@ Covers three layers:
   3. main          – enrichment / S3 failures are forwarded to the DLQ and offset committed
 """
 from unittest.mock import MagicMock, patch
-import io
 
-import pandas as pd
 import pyarrow as pa
 import pytest
 
-from shared.parquet_io import write_parquet_bytes
+from shared.parquet_io import write_parquet_bytes, read_parquet_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +199,8 @@ class TestKafkaConsumerDlqOnDeserError:
         result = kc.poll()
 
         assert result is not None
-        df, raw = result
-        assert isinstance(df, pd.DataFrame)
+        rows, raw = result
+        assert isinstance(rows, list)
         mock_dlq.publish.assert_not_called()
 
 
@@ -215,8 +213,8 @@ class TestMainDlqPaths:
 
     def _make_poll_result(self):
         raw = _make_parquet_bytes()
-        df = pd.read_parquet(io.BytesIO(raw))
-        return df, raw
+        rows = read_parquet_bytes(raw)
+        return rows, raw
 
     @patch("src.main.S3Uploader")
     @patch("src.main.KafkaConsumer")
@@ -311,16 +309,12 @@ class TestMainDlqPaths:
     @patch("src.main.DlqProducer")
     def test_schema_error_routes_to_dlq(self, MockDlq, MockConsumer, _MockUploader):
         """Test that schema drift (missing columns) routes to DLQ."""
-        # Create a DataFrame with missing Position_URL column
-        bad_df = pd.DataFrame({
-            "Index": pd.array([1], dtype="int32"),
-            "Position_Title": ["Backend Engineer"],
-            # Missing Position_URL intentionally
-        })
+        # Rows missing Position_URL key
+        bad_rows = [{"Index": 1, "Position_Title": "Backend Engineer"}]
         mock_dlq = MockDlq.return_value
         mock_consumer = MockConsumer.return_value
         raw = _make_parquet_bytes()
-        mock_consumer.poll.side_effect = [(bad_df, raw), KeyboardInterrupt]
+        mock_consumer.poll.side_effect = [(bad_rows, raw), KeyboardInterrupt]
 
         from src.main import run
         with pytest.raises((KeyboardInterrupt, SystemExit)):

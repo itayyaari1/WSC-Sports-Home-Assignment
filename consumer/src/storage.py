@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
 import boto3
-import pandas as pd
 import pyarrow as pa
 from botocore.exceptions import ClientError, EndpointConnectionError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -9,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from shared.logger import get_logger
 from shared.parquet_io import write_parquet_bytes
 from src.config import settings
+from src.models import EnrichedPosition
 
 logger = get_logger(__name__)
 
@@ -34,9 +34,20 @@ def generate_s3_key() -> str:
     )
 
 
-def df_to_parquet_bytes(df: pd.DataFrame) -> bytes:
-    """Serialize enriched DataFrame to parquet bytes."""
-    table = pa.Table.from_pandas(df, schema=ENRICHED_SCHEMA, preserve_index=False)
+def enriched_to_parquet_bytes(enriched: list[EnrichedPosition]) -> bytes:
+    """Serialize a list of EnrichedPosition objects to Parquet bytes."""
+    now = datetime.now(timezone.utc)
+    table = pa.table(
+        {
+            "Index": pa.array([e.index for e in enriched], type=pa.int32()),
+            "Position_Title": pa.array([e.title for e in enriched], type=pa.string()),
+            "category": pa.array([e.category for e in enriched], type=pa.string()),
+            "seniority_level": pa.array([e.seniority_level for e in enriched], type=pa.string()),
+            "complexity_score": pa.array([e.complexity_score for e in enriched], type=pa.int32()),
+            "enriched_at": pa.array([now] * len(enriched), type=pa.timestamp("us", tz="UTC")),
+        },
+        schema=ENRICHED_SCHEMA,
+    )
     return write_parquet_bytes(table)
 
 
@@ -63,16 +74,16 @@ class S3Uploader:
             "S3 upload attempt %d failed, retrying...", retry_state.attempt_number
         ),
     )
-    def upload(self, df: pd.DataFrame) -> str:
-        """Upload enriched DataFrame as parquet to S3.
+    def upload(self, enriched: list[EnrichedPosition]) -> str:
+        """Upload enriched positions as parquet to S3.
 
         Returns:
             The S3 key where the file was uploaded.
         """
-        if df.empty:
-            raise ValueError("Refusing to upload empty DataFrame to S3")
+        if not enriched:
+            raise ValueError("Refusing to upload empty positions list to S3")
 
-        parquet_bytes = df_to_parquet_bytes(df)
+        parquet_bytes = enriched_to_parquet_bytes(enriched)
         s3_key = generate_s3_key()
 
         self._client.put_object(

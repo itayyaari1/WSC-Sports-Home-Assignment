@@ -1,42 +1,22 @@
 import sys
-from datetime import datetime, timezone
-
-import pandas as pd
 
 from shared.logger import get_logger
 from src.config import settings
 from src.dlq_producer import DlqProducer
 from src.enrichment import enrich_positions
 from src.kafka_consumer import KafkaConsumer
-from src.models import BasePosition, EnrichedPosition
+from src.models import BasePosition
 from src.storage import S3Uploader
 
 logger = get_logger(__name__)
 
 
-def _df_to_positions(df: pd.DataFrame) -> list[BasePosition]:
-    """Convert a raw positions DataFrame into a list of BasePosition models."""
+def _dicts_to_positions(rows: list[dict]) -> list[BasePosition]:
+    """Convert deserialized Parquet rows into a list of BasePosition models."""
     return [
-        BasePosition(index=int(row.Index), title=str(row.Position_Title), url=str(row.Position_URL))
-        for row in df.itertuples(index=False)
+        BasePosition(index=int(row["Index"]), title=str(row["Position_Title"]), url=str(row["Position_URL"]))
+        for row in rows
     ]
-
-
-def _enriched_to_df(enriched: list[EnrichedPosition]) -> pd.DataFrame:
-    """Convert a list of EnrichedPosition models back to a DataFrame for storage."""
-    now = datetime.now(timezone.utc)
-    rows = [
-        {
-            "Index": e.index,
-            "Position_Title": e.title,
-            "category": e.category,
-            "seniority_level": e.seniority_level,
-            "complexity_score": e.complexity_score,
-            "enriched_at": now,
-        }
-        for e in enriched
-    ]
-    return pd.DataFrame(rows)
 
 
 def run():
@@ -54,11 +34,11 @@ def run():
             if result is None:
                 continue
 
-            df, raw_bytes = result
+            rows, raw_bytes = result
 
-            # Convert DataFrame rows to Position models
+            # Convert deserialized rows to Position models
             try:
-                positions = _df_to_positions(df)
+                positions = _dicts_to_positions(rows)
             except Exception as e:
                 logger.error("Schema conversion failed, forwarding to DLQ: %s", e)
                 try:
@@ -82,12 +62,9 @@ def run():
                     consumer.commit_offset()
                 continue
 
-            # Convert enriched models back to DataFrame for storage
-            enriched_df = _enriched_to_df(enriched)
-
             # Upload to S3
             try:
-                s3_key = uploader.upload(enriched_df)
+                s3_key = uploader.upload(enriched)
                 logger.info("Successfully processed and uploaded to %s", s3_key)
             except Exception as e:
                 logger.error("S3 upload failed after retries, forwarding to DLQ: %s", e)

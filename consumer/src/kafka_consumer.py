@@ -1,4 +1,3 @@
-import pandas as pd
 from confluent_kafka import Consumer, KafkaError
 
 from shared.logger import get_logger
@@ -29,7 +28,7 @@ class KafkaConsumer:
             settings.kafka_group_id,
         )
 
-    def poll(self) -> tuple[pd.DataFrame, bytes] | None:
+    def poll(self) -> tuple[list[dict], bytes] | None:
         """Poll for a single message and return (DataFrame, raw_bytes), or None.
 
         If the message payload cannot be deserialized the raw bytes are forwarded to
@@ -68,15 +67,15 @@ class KafkaConsumer:
             return None
 
         try:
-            df = read_parquet_bytes(raw_bytes)
+            rows = read_parquet_bytes(raw_bytes)
         except Exception as exc:
             logger.error("Failed to deserialize message payload: %s", exc)
             self._dlq.publish(raw_bytes, f"deserialization error: {exc}", msg.topic())
             self.commit_offset()
             return None
 
-        logger.info("Deserialized parquet with %d rows", len(df))
-        return df, raw_bytes
+        logger.info("Deserialized parquet with %d rows", len(rows))
+        return rows, raw_bytes
 
     def commit_offset(self) -> None:
         """Manually commit the current offset."""

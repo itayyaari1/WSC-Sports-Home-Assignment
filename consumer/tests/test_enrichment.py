@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
@@ -81,7 +81,7 @@ class TestEnrichPositions:
         assert result == []
 
     @patch("src.enrichment.save_cache")
-    @patch("src.enrichment.fetch_position_html", return_value=None)
+    @patch("src.enrichment._fetch_all_html", new_callable=AsyncMock, return_value=[None, None, None])
     @patch("src.enrichment.load_cache", return_value={"positions_enrichment": {}})
     def test_enriches_list_of_base_positions(self, _mock_cache, _mock_fetch, _mock_save):
         positions = [
@@ -97,7 +97,7 @@ class TestEnrichPositions:
         assert enriched[2].category == "Operations"
 
     @patch("src.enrichment.save_cache")
-    @patch("src.enrichment.fetch_position_html", return_value=None)
+    @patch("src.enrichment._fetch_all_html", new_callable=AsyncMock, return_value=[None])
     @patch("src.enrichment.load_cache", return_value={"positions_enrichment": {}})
     def test_complexity_scores_are_valid_range(self, _mock_cache, _mock_fetch, _mock_save):
         positions = [BasePosition(index=1, title="Backend Engineer", url="https://example.com/career/1")]
@@ -105,7 +105,7 @@ class TestEnrichPositions:
         assert 0 <= enriched[0].complexity_score <= 100
 
     @patch("src.enrichment.save_cache")
-    @patch("src.enrichment.fetch_position_html")
+    @patch("src.enrichment._fetch_all_html", new_callable=AsyncMock)
     @patch("src.enrichment.load_cache")
     def test_enrichment_cache_hit_skips_recalculation(self, mock_load_cache, mock_fetch, mock_save):
         """On a second call, the same requirements HTML must be served from cache
@@ -128,7 +128,7 @@ class TestEnrichPositions:
         mock_load_cache.return_value = {
             "positions_enrichment": {req_hash: cached_enrichment},
         }
-        mock_fetch.return_value = position_html
+        mock_fetch.return_value = [position_html]
 
         positions = [BasePosition(index=1, title="Backend Engineer", url="https://example.com/career/1")]
         enriched = enrich_positions(positions)
@@ -138,5 +138,5 @@ class TestEnrichPositions:
         assert enriched[0].seniority_level == "Senior"
         assert enriched[0].years_of_experience == 5
         assert enriched[0].complexity_score == 57
-        mock_fetch.assert_called_once()  # page fetched once to get the HTML
+        mock_fetch.assert_called_once()  # _fetch_all_html called once for the batch
         mock_save.assert_called_once()   # cache flushed exactly once

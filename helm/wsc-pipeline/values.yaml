@@ -16,7 +16,7 @@ consumer:
     repository: wsc-consumer
     tag: latest
     pullPolicy: Never
-  replicaCount: 1
+  replicaCount: 3
 
 # Shared pipeline config (Kafka topic, S3 bucket, etc.)
 config:

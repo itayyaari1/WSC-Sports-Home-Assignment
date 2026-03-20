@@ -69,6 +69,8 @@ spec:
               value: "1"
             - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
               value: "true"
+            - name: KAFKA_NUM_PARTITIONS
+              value: "3"
           readinessProbe:
             tcpSocket:
               port: 9092

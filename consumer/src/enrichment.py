@@ -1,13 +1,36 @@
+import asyncio
+
+import aiohttp
 from bs4 import BeautifulSoup
 
 from shared.logger import get_logger
-from shared.scraper import fetch_position_html, parse_skills_count, parse_years_of_experience
+from shared.scraper import parse_skills_count, parse_years_of_experience
 from src.config import settings
 from src.consts import CATEGORY_KEYWORDS, SENIORITY_LEVEL_KEYWORDS, SENIORITY_SCORES
 from src.models import BasePosition, EnrichedPosition
 from src.url_cache import get_cached_enrichment, hash_requirements_block, load_cache, save_cache
 
 logger = get_logger(__name__)
+
+_FETCH_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+
+async def _fetch_url(session: aiohttp.ClientSession, url: str) -> str | None:
+    """Fetch a single position page asynchronously. Returns HTML or None on failure."""
+    try:
+        async with session.get(url, timeout=_FETCH_TIMEOUT) as resp:
+            resp.raise_for_status()
+            return await resp.text()
+    except Exception as e:
+        logger.warning("Failed to fetch position page %s: %s", url, e)
+        return None
+
+
+async def _fetch_all_html(positions: list[BasePosition]) -> list[str | None]:
+    """Fetch all position pages concurrently using a single aiohttp session."""
+    async with aiohttp.ClientSession() as session:
+        tasks = [_fetch_url(session, p.url) for p in positions]
+        return await asyncio.gather(*tasks)
 
 
 def classify_category(title: str) -> str:
@@ -61,46 +84,41 @@ def calculate_complexity_score(
 
 def _enrich_one(
     position: BasePosition,
+    html: str | None,
     cache: dict,
 ) -> EnrichedPosition:
-    """Enrich a single BasePosition by scraping its detail page.
+    """Enrich a single BasePosition using pre-fetched HTML.
 
-    Checks `cache["positions_enrichment"]` first; if the requirements block
-    HTML is unchanged (same hash), returns the cached result without
-    re-computing. New results are written into `cache` in memory so the
-    caller can do a single disk flush after all positions are processed.
+    Checks the cache first; on a miss, parses the HTML and writes the result
+    back into cache so the caller can flush once after all positions are done.
     """
-    url = position.url or None
-
     years = 0
     skills = 0
     req_block = None
 
-    if url:
-        html = fetch_position_html(url)
-        if html:
-            soup = BeautifulSoup(html, "html.parser")
-            req_block = soup.select_one(
-                "div.career-text-block__wrp--data--requirements"
-            )
-            if req_block:
-                req_block_html = str(req_block)
-                cached = get_cached_enrichment(req_block_html, cache)
-                if cached:
-                    logger.debug("Enrichment cache hit for: %s", position.title)
-                    return EnrichedPosition(
-                        index=position.index,
-                        title=position.title,
-                        url=position.url,
-                        **cached,
-                    )
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        req_block = soup.select_one(
+            "div.career-text-block__wrp--data--requirements"
+        )
+        if req_block:
+            req_block_html = str(req_block)
+            cached = get_cached_enrichment(req_block_html, cache)
+            if cached:
+                logger.debug("Enrichment cache hit for: %s", position.title)
+                return EnrichedPosition(
+                    index=position.index,
+                    title=position.title,
+                    url=position.url,
+                    **cached,
+                )
 
-                years = parse_years_of_experience(req_block)
-                skills = parse_skills_count(req_block)
-            else:
-                logger.debug("No requirements block found for: %s", position.title)
+            years = parse_years_of_experience(req_block)
+            skills = parse_skills_count(req_block)
+        else:
+            logger.debug("No requirements block found for: %s", position.title)
     else:
-        logger.warning("No URL available for position: %s", position.title)
+        logger.warning("No HTML available for position: %s", position.title)
 
     category = classify_category(position.title)
     seniority_level = classify_seniority_level(req_block, years)
@@ -127,16 +145,18 @@ def _enrich_one(
 
 
 def enrich_positions(positions: list[BasePosition]) -> list[EnrichedPosition]:
-    """Enrich a list of Positions with scraped signals and a complexity score."""
+    """Enrich a list of positions by fetching all detail pages concurrently then scoring."""
     if not positions:
         logger.warning("Received empty positions list for enrichment")
         return []
 
     cache: dict = load_cache(settings.url_cache_path) or {"positions_enrichment": {}}
 
-    logger.info("Enriching %d positions", len(positions))
+    logger.info("Fetching %d position pages concurrently", len(positions))
+    html_pages = asyncio.run(_fetch_all_html(positions))
 
-    enriched = [_enrich_one(p, cache) for p in positions]
+    logger.info("Enriching %d positions", len(positions))
+    enriched = [_enrich_one(p, html, cache) for p, html in zip(positions, html_pages)]
 
     save_cache(settings.url_cache_path, cache)
     return enriched

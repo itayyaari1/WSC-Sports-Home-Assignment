@@ -6,7 +6,7 @@ build:
 
 up:
 	cp -n .env.example .env 2>/dev/null || true
-	docker compose up -d
+	docker compose up -d --scale consumer=3
 
 down:
 	docker compose down

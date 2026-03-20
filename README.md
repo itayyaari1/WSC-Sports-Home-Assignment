@@ -338,6 +338,28 @@ All configuration via environment variables (see `.env.example`):
 
 ---
 
+## Scalability — High Throughput Design
+
+The pipeline is built to handle thousands of records per second from multiple concurrent sources across three layers:
+
+**1. Kafka topic partitioning**  
+The `wsc-positions` topic is configured with **3 partitions** (`KAFKA_NUM_PARTITIONS=3`). Multiple producers publishing from independent sources distribute messages across partitions, allowing the broker to absorb high ingest rates without a single-partition bottleneck.
+
+**2. Consumer Group horizontal scaling**  
+The consumer runs as a **Consumer Group** (`KAFKA_GROUP_ID=wsc-consumer-group`). Kafka's partition assignment protocol gives each consumer instance exclusive ownership of one partition, so scaling to 3 replicas (`--scale consumer=3` in Docker Compose, `replicaCount: 3` in Helm) means all 3 partitions are drained in parallel — throughput scales linearly with replica count up to the partition count.
+
+**3. Async enrichment with `aiohttp` + `asyncio.gather`**  
+Within each consumer instance, enriching a batch of positions used to issue one blocking HTTP request at a time. Now all position-detail pages in a batch are fetched **concurrently** in a single `asyncio.gather` call:
+
+```python
+html_pages = asyncio.run(_fetch_all_html(positions))   # all URLs in parallel
+enriched   = [_enrich_one(p, html, cache) for p, html in zip(positions, html_pages)]
+```
+
+For a batch of N positions this reduces wall-clock fetch time from `O(N × latency)` to `O(max latency)`, eliminating the dominant bottleneck for I/O-bound enrichment.
+
+---
+
 ## Design Decisions
 
 - **confluent-kafka** over kafka-python — production-grade, actively maintained, better performance
